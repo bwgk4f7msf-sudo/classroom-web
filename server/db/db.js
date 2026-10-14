@@ -73,6 +73,12 @@ const db = {
   async close() { if (mysql) await connection.end(); else connection.close() },
 }
 for (const sql of schema(mysql)) await db.run(sql)
+if (mysql) {
+  const captchaColumns = await db.all('SHOW COLUMNS FROM captchas')
+  if (captchaColumns.find(column => column.Field === 'text')?.Type.toLowerCase() === 'varchar(10)') {
+    await db.run('ALTER TABLE captchas MODIFY COLUMN text VARCHAR(64) NOT NULL')
+  }
+}
 // Non-destructive upgrade of the original login database.
 const columns = mysql ? await db.all('SHOW COLUMNS FROM users') : await db.all('PRAGMA table_info(users)')
 const hasColumn = (name) => columns.some((column) => (column.name || column.Field) === name)

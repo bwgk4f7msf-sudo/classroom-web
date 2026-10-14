@@ -10,21 +10,14 @@ import { scheduling } from './scheduling.js'
 import { workflows } from './workflows.js'
 import { faces } from './faces.js'
 import { fail } from './http.js'
-import { isAllowedOrigin } from './origin.js'
+import { checkRequestSource, configureProxy, securityHeaders } from './security.js'
 
 if (process.env.NODE_ENV === 'production' && (process.env.SESSION_SECRET || '').length < 32) throw new Error('生产环境 SESSION_SECRET 至少 32 字符')
 const app = express()
 app.disable('x-powered-by')
-if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1)
-app.use('/api', (req, res, next) => {
-  res.set('Cache-Control', 'no-store')
-  res.set('X-Content-Type-Options', 'nosniff')
-  // Cookie authentication is same-origin. Native clients do not send Origin.
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.origin) {
-    if (!isAllowedOrigin(req.headers.origin, `${req.protocol}://${req.get('host')}`)) fail(403, '不允许跨站请求')
-  }
-  next()
-})
+configureProxy(app)
+app.use(securityHeaders)
+app.use('/api', checkRequestSource)
 app.use(express.json({ limit: '1mb' }))
 app.use('/api', (req, _res, next) => {
   if (['POST', 'PATCH', 'PUT'].includes(req.method) && !req.is('multipart/form-data')) {
@@ -50,7 +43,8 @@ app.use((error, _req, res, _next) => {
   if (error.type === 'entity.too.large' || error.code === 'LIMIT_FILE_SIZE') { status = 413; message = '上传内容过大' }
   if (error.name === 'MulterError') { status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400; message = '仅允许上传一张不超过 5MB 的图片，字段名为 file' }
   if (status >= 500) { console.error('API error:', error.code || error.name); message = status === 503 ? '人脸服务暂不可用，请联系教师采用人工登记' : '服务器处理失败' }
-  res.status(status).json({ success: false, message, code: error.code })
+  const code = error.status && /^[A-Z][A-Z_]+$/.test(error.code || '') ? error.code : undefined
+  res.status(status).json({ success: false, message, code })
 })
 export default app
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

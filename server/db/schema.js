@@ -19,7 +19,7 @@ export function schema(mysql) {
     `CREATE TABLE IF NOT EXISTS audit_logs (id ${id}, actor_id INTEGER, action VARCHAR(64) NOT NULL, resource_type VARCHAR(64) NOT NULL, resource_id VARCHAR(64), result VARCHAR(32) NOT NULL, created_at VARCHAR(30) NOT NULL, FOREIGN KEY(actor_id) REFERENCES users(id))`,
     `CREATE TABLE IF NOT EXISTS sessions (sid VARCHAR(128) PRIMARY KEY, data TEXT NOT NULL, expires BIGINT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS revoked_sessions (sid VARCHAR(128) PRIMARY KEY, expires BIGINT NOT NULL)`,
-    `CREATE TABLE IF NOT EXISTS captchas (session_id VARCHAR(128) PRIMARY KEY, text VARCHAR(10) NOT NULL, expires BIGINT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS captchas (session_id VARCHAR(128) PRIMARY KEY, text VARCHAR(64) NOT NULL, expires BIGINT NOT NULL)`,
   ]
   return statements.map((sql) => mysql ? sql + ' ENGINE=InnoDB' : sql)
 }

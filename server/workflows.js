@@ -28,7 +28,7 @@ workflows.patch('/requests/:id', roles('admin'), async (req, res) => {
     const row = await db.get('SELECT * FROM change_requests WHERE id=?' + db.lock, [id(req.params.id)])
     if (!row) fail(404, '申请不存在')
     if (row.status !== 'pending') fail(409, '申请已经处理')
-    if (row.kind === 'password_reset') fail(409, '密码重置申请请在用户管理中重设密码并解禁')
+    if (row.kind === 'password_reset' && status === 'approved') fail(409, '密码重置申请请在用户管理中重设密码并解禁')
     const applicant = await db.get('SELECT * FROM users WHERE id=?', [row.user_id])
     let applied = {}
     if (status === 'approved') {
@@ -69,6 +69,12 @@ workflows.post('/users/:id/reset-password', roles('admin'), async (req, res) => 
 workflows.get('/student-candidates', roles('admin', 'teacher'), async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 64) : ''
   if (!q) return res.json({ items: [] })
+  if (req.user.role === 'teacher') {
+    const items = await db.all(`SELECT s.id,s.student_no,s.name
+      FROM students s JOIN users u ON u.id=s.user_id
+      WHERE u.status='active' AND s.student_no=? LIMIT 1`, [q])
+    return res.json({ items })
+  }
   res.json({ items: await db.all("SELECT s.id,s.student_no,s.name FROM students s JOIN users u ON u.id=s.user_id WHERE u.status='active' AND (s.student_no LIKE ? OR s.name LIKE ?) ORDER BY s.student_no LIMIT 20", [`%${q}%`, `%${q}%`]) })
 })
 workflows.get('/notifications', roles('student'), async (req, res) => {

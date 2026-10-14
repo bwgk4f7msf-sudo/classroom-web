@@ -28,6 +28,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       APP_ORIGINS: ${APP_ORIGINS:?Set the HTTPS public origin in .env}
       TRUST_PROXY: "1"
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:?Set the reverse proxy IP or CIDR in .env}
       COMPREFACE_URL: ${COMPREFACE_URL:-http://host.docker.internal:8000}
       COMPREFACE_API_KEY: ${COMPREFACE_API_KEY:-}
       FACE_THRESHOLD: ${FACE_THRESHOLD:-0.85}

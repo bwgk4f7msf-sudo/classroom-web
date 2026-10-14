@@ -1,20 +1,22 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import svgCaptcha from 'svg-captcha'
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
+import { scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
 import db from './db/db.js'
 import { submitRequest } from './requests.js'
 import { authenticate, audit, fail, string, roles, choice, id } from './http.js'
+import { createAuthLimiter } from './auth-limits.js'
+import { captchaDigest, verifyCaptcha } from './captcha.js'
 
 const scrypt = promisify(scryptCallback)
 export const cookieOptions = { path: '/', httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production' }
 const publicUser = ({ id, username, role, avatar }) => ({ id, username, role, avatar })
 export async function revokeUserSessions(userId) {
   for (const row of await db.all('SELECT sid,data FROM sessions')) {
-    if (JSON.parse(row.data).userId === userId) {
+    let data
+    try { data = JSON.parse(row.data) } catch { data = null }
+    if (!data || data.userId === userId) {
       await db.run('DELETE FROM sessions WHERE sid=?', [row.sid])
       if (!await db.get('SELECT sid FROM revoked_sessions WHERE sid=?', [row.sid])) {
         await db.run('INSERT INTO revoked_sessions(sid,expires) VALUES (?,?)', [row.sid, Date.now() + 604800000])
@@ -39,28 +41,14 @@ export async function createUser(username, password, role, status = 'active', pr
   })
 }
 if (!await db.get("SELECT id FROM users WHERE role='admin' LIMIT 1")) {
-  const password = process.env.ADMIN_PASSWORD || `${randomBytes(24).toString('base64url')}1a`
+  const password = process.env.ADMIN_PASSWORD
+  if (!password) throw new Error('首次启动须设置 ADMIN_PASSWORD，系统不再生成明文凭据文件')
   validatePassword(password, 12)
-  if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_PASSWORD) throw new Error('首次部署须设置 ADMIN_PASSWORD')
   await createUser('admin', password, 'admin')
-  if (!process.env.ADMIN_PASSWORD) {
-    mkdirSync(dirname(db.name), { recursive: true })
-    writeFileSync(resolve(dirname(db.name), 'admin-credentials.txt'), `Username: admin\nPassword: ${password}\n`, { mode: 0o600 })
-    console.log('初始管理员凭据已保存至数据库目录的 admin-credentials.txt')
-  }
 }
 
 export const auth = Router()
-const attempts = new Map()
-auth.use(['/captcha', '/auth/login', '/auth/register', '/auth/reset-request', '/user/login', '/user/register'], (req, _res, next) => {
-  const time = Date.now()
-  for (const [key, value] of attempts) if (value.expires < time) attempts.delete(key)
-  const key = req.ip
-  const attempt = attempts.get(key) || { count: 0, expires: time + 60_000 }
-  attempts.set(key, attempt)
-  if (++attempt.count > 60) fail(429, '操作频繁，请一分钟后重试')
-  next()
-})
+auth.use(['/captcha', '/auth/login', '/auth/register', '/auth/reset-request', '/user/login', '/user/register'], createAuthLimiter())
 auth.get('/captcha', async (req, res) => {
   const captcha = svgCaptcha.create({ size: 5, noise: 3, color: true, background: '#eef2f6', ignoreChars: '0oO1ilI' })
   req.session.captchaExpires = Date.now() + 300_000
@@ -68,7 +56,7 @@ auth.get('/captcha', async (req, res) => {
     await db.run('DELETE FROM sessions WHERE expires<?', [Date.now()])
     await db.run('DELETE FROM revoked_sessions WHERE expires<?', [Date.now()])
     await db.run('DELETE FROM captchas WHERE expires < ? OR session_id=?', [Date.now(), req.sessionID])
-    await db.run('INSERT INTO captchas(session_id,text,expires) VALUES (?,?,?)', [req.sessionID, captcha.text.toUpperCase(), req.session.captchaExpires])
+    await db.run('INSERT INTO captchas(session_id,text,expires) VALUES (?,?,?)', [req.sessionID, captchaDigest(captcha.text), req.session.captchaExpires])
   })
   await promisify(req.session.save).call(req.session)
   res.json({ image: `data:image/svg+xml;base64,${Buffer.from(captcha.data).toString('base64')}` })
@@ -82,7 +70,7 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
   const { password, code, role } = req.body
   const expires = req.session.captchaExpires
   delete req.session.captchaExpires
-  if (!captcha || captcha.expires < Date.now() || !(expires >= Date.now()) || typeof code !== 'string' || captcha.text !== code.trim().toUpperCase()) {
+  if (!captcha || captcha.expires < Date.now() || !(expires >= Date.now()) || !verifyCaptcha(captcha.text, code)) {
     fail(400, '验证码错误或已过期，请刷新后重试', 'CAPTCHA_INVALID')
   }
   const username = string(req.body.username, '账号', 24)
@@ -99,20 +87,38 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
       const profile = await db.get(`SELECT * FROM ${table} WHERE user_id=?`, [target.id])
       if (profile?.[field] !== number || profile?.name !== name) fail(400, '账号或身份资料不匹配')
       req.user = target
+      const recent = await db.get(`SELECT id FROM change_requests
+        WHERE user_id=? AND kind='password_reset' AND created_at>=?`,
+      [target.id, new Date(Date.now() - 86_400_000).toISOString()])
+      if (recent) fail(429, '该账号 24 小时内已提交过重置申请', 'RESET_RATE_LIMITED')
       await submitRequest(req, 'password_reset', target.id, {})
-      await db.run("UPDATE users SET status='disabled' WHERE id=?", [target.id])
-      await revokeUserSessions(target.id)
     })
-    return res.status(202).json({ success: true, message: '申请已提交，账号已停用，请联系管理员核实身份、重设密码并解禁' })
+    return res.status(202).json({ success: true, message: '申请已提交，请联系管理员核实身份并重设密码；账号和现有登录仍可正常使用' })
   }
   if (typeof password !== 'string' || Buffer.byteLength(password) > 72) fail(400, '密码长度不合法')
   if (req.path.endsWith('register')) {
     validatePassword(password)
     choice(role, ['teacher', 'student'], '身份')
+    const response = {
+      success: true,
+      requiresApproval: role === 'teacher',
+      message: '注册请求已受理。如资料可用，学生可直接登录，教师须等待管理员审核；如无法登录，请联系管理员。',
+    }
     // Teachers require approval; public registration must not grant staff privileges.
-    const userId = await createUser(username, password, role, role === 'teacher' ? 'pending' : 'active', { number: string(req.body[role === 'student' ? 'student_no' : 'teacher_no'], '学号 / 工号', 64), name: string(req.body.name, '姓名', 80) })
+    let userId
+    try {
+      userId = await createUser(username, password, role, role === 'teacher' ? 'pending' : 'active', {
+        number: string(req.body[role === 'student' ? 'student_no' : 'teacher_no'], '学号 / 工号', 64),
+        name: string(req.body.name, '姓名', 80),
+      })
+    } catch (error) {
+      if (['SQLITE_CONSTRAINT_UNIQUE', 'ER_DUP_ENTRY'].includes(error.code)) {
+        return res.status(202).json(response)
+      }
+      throw error
+    }
     await audit(req, 'register', 'users', userId)
-    return res.status(201).json({ success: true, requiresApproval: role === 'teacher' })
+    return res.status(202).json(response)
   }
   const user = await db.get('SELECT * FROM users WHERE username=?', [username])
   let valid = false
@@ -131,6 +137,7 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
   if (user.status !== 'active') fail(403, user.status === 'pending' ? '教师账号等待管理员审核' : '账号已停用')
   await promisify(req.session.regenerate).call(req.session)
   req.session.userId = user.id
+  req.session.createdAt = Date.now()
   await promisify(req.session.save).call(req.session)
   req.user = user
   await audit(req, 'login', 'users', user.id)
@@ -145,8 +152,10 @@ auth.post(['/auth/logout', '/user/logout'], async (req, res) => {
   res.json({ success: true })
 })
 auth.post('/auth/refresh', authenticate, async (req, res) => {
+  const createdAt = req.session.createdAt
   await promisify(req.session.regenerate).call(req.session)
   req.session.userId = req.user.id
+  req.session.createdAt = createdAt
   await promisify(req.session.save).call(req.session)
   res.json({ success: true, user: publicUser(req.user) })
 })
@@ -175,7 +184,6 @@ auth.patch('/users/:id', authenticate, roles('admin'), async (req, res) => {
   if (target.role === 'admin') fail(403, '此接口不能停用管理员')
   await db.transaction(async () => {
     await db.get('SELECT id FROM users WHERE id=?' + db.lock, [userId])
-    if (status === 'active' && await db.get("SELECT id FROM change_requests WHERE user_id=? AND kind='password_reset' AND status='pending'", [userId])) fail(409, '请先通过重置密码操作重设密码并解禁')
     await db.run('UPDATE users SET status=? WHERE id=?', [status, userId])
     if (status === 'disabled') await revokeUserSessions(userId)
     await audit(req, 'user.status', 'users', userId)

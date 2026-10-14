@@ -2,10 +2,11 @@ import { Router } from 'express'
 import multer from 'multer'
 import { randomUUID } from 'node:crypto'
 import db from './db/db.js'
-import { roles, student, id, string, choice, fail, audit, now } from './http.js'
+import { authenticate, roles, student, id, string, choice, fail, audit, now } from './http.js'
 import { faceRequest, recognize } from './compreface.js'
 
 export const faces = Router()
+faces.use(authenticate)
 const learner = roles('student')
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0 },
   fileFilter: (_req, file, cb) => cb(null, ['image/jpeg', 'image/png'].includes(file.mimetype)),

@@ -61,7 +61,7 @@ async function submit() {
       body: JSON.stringify({ username, password: form.password, code: form.code, role: form.role, name: form.name, number: form.number, [form.role === 'student' ? 'student_no' : 'teacher_no']: form.number }),
     })
     if (isRegister) {
-      ElMessage.success(result.requiresApproval ? '注册成功，教师账号需管理员审核后登录。' : '注册成功，请登录。')
+      ElMessage.success(result.message)
       await router.replace('/login')
     } else if (resetMode.value) {
       ElMessage.success(result.message); resetMode.value = false; await refreshCaptcha(true)
@@ -102,7 +102,7 @@ onMounted(refreshCaptcha)
             </el-radio-group>
           </el-form-item>
           <template v-if="isRegister || resetMode"><el-form-item :label="form.role === 'student' ? '学号' : '工号'" required><el-input v-model="form.number" maxlength="64" placeholder="注册后不可修改" /></el-form-item><el-form-item label="姓名" required><el-input v-model="form.name" maxlength="80" placeholder="请输入真实姓名" /></el-form-item></template>
-          <el-alert v-if="resetMode" title="仅学生和教师可申请。提交后账号立即停用，现有登录失效；请联系管理员核实身份、重设密码并解禁。" type="warning" :closable="false" />
+          <el-alert v-if="resetMode" title="仅学生和教师可申请，每账号 24 小时限一次。提交仅生成待办，账号和现有登录仍可使用；请联系管理员核实身份并重设密码。" type="warning" :closable="false" />
           <el-form-item label="验证码">
             <div class="captcha-group">
               <el-input v-model="form.code" maxlength="5" placeholder="输入图中字符" aria-label="验证码" size="large" :disabled="busy || refreshing" autocomplete="off" />
@@ -115,7 +115,7 @@ onMounted(refreshCaptcha)
             <div class="captcha-hint">5 分钟内有效，不区分大小写</div>
           </el-form-item>
         <div class="button-group">
-          <el-button class="auth-submit" type="primary" native-type="submit" :loading="busy">{{ isRegister ? '注册' : resetMode ? '提交申请并停用账号' : '登录' }}</el-button>
+          <el-button class="auth-submit" type="primary" native-type="submit" :loading="busy">{{ isRegister ? '注册' : resetMode ? '提交重置申请' : '登录' }}</el-button>
           <el-button class="auth-switch" @click="router.push(isRegister ? '/login' : '/register')">{{ isRegister ? '返回登录界面' : '没有账号？去注册' }}</el-button>
           <el-button v-if="!isRegister" class="auth-switch" :disabled="busy" @click="resetMode = !resetMode; refreshCaptcha()">{{ resetMode ? '返回登录' : '忘记密码？申请重置' }}</el-button>
         </div>

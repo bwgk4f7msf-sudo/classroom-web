@@ -145,7 +145,25 @@ async function createTask() {
       <el-button v-if="role === 'admin'" type="danger" plain :disabled="saving" @click="archive(details)">归档教学班</el-button>
       <el-table :data="detailSessions" empty-text="暂未设置课次" class="section-gap"><el-table-column label="日期" width="115"><template #default="{ row }">{{ dateKey(row.start_at) }}</template></el-table-column><el-table-column label="时间" width="125"><template #default="{ row }">{{ formatTime(row.start_at) }}–{{ formatTime(row.end_at) }}</template></el-table-column><el-table-column prop="location" label="地点" min-width="100" /><el-table-column label="调课说明" min-width="170"><template #default="{ row }"><span v-if="row.change_reason">{{ row.change_reason }}<br>原安排：{{ dateKey(row.original_start) }} {{ formatTime(row.original_start) }}</span><span v-else>—</span></template></el-table-column><el-table-column v-if="role !== 'student'" label="操作" width="80" fixed="right"><template #default="{ row }"><el-button link type="primary" :disabled="Date.parse(row.start_at) <= clock" @click="edit(details, row)">调课</el-button></template></el-table-column></el-table>
     </el-drawer>
-    <el-dialog v-model="enrollment" title="添加学生" width="min(480px, 94vw)" :close-on-click-modal="false"><el-form label-position="top"><el-form-item label="课程 / 教学班"><el-select v-model="targetClass" placeholder="请选择课程"><el-option v-for="c in activeClasses" :key="c.id" :value="c.id" :label="`${c.course_name} · ${c.name}`" /></el-select></el-form-item><el-form-item label="学生学号"><el-autocomplete v-model="studentNo" :fetch-suggestions="candidates" :trigger-on-focus="false" placeholder="输入学号或姓名，选择候选学生" maxlength="64"><template #default="{ item }">{{ item.label }}</template></el-autocomplete></el-form-item><p class="muted">按学号或姓名搜索，候选项同时显示学号和姓名；同名学生请核对学号。</p></el-form><template #footer><el-button :disabled="saving" @click="enrollment = false">取消</el-button><el-button type="primary" :loading="saving" @click="enroll">加入教学班</el-button></template></el-dialog>
+    <el-dialog v-model="enrollment" title="添加学生" width="min(480px, 94vw)" :close-on-click-modal="false">
+      <el-form label-position="top">
+      <el-form-item label="课程 / 教学班">
+      <el-select v-model="targetClass" placeholder="请选择课程">
+      <el-option v-for="c in activeClasses" :key="c.id" :value="c.id" :label="`${c.course_name} · ${c.name}`" />
+      </el-select>
+      </el-form-item>
+      <el-form-item label="学生学号">
+      <el-autocomplete v-model="studentNo" :fetch-suggestions="candidates" :trigger-on-focus="false" placeholder="输入完整学号，选择候选学生" maxlength="64">
+      <template #default="{ item }">{{ item.label }}</template>
+      </el-autocomplete>
+      </el-form-item>
+      <p class="muted">教师须输入完整学号精确查找；候选项显示学号和姓名，请核对后添加。</p>
+      </el-form>
+      <template #footer>
+      <el-button :disabled="saving" @click="enrollment = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="enroll">加入教学班</el-button>
+      </template>
+      </el-dialog>
     <el-dialog v-model="launch" title="发起考勤" width="min(480px, 94vw)" :close-on-click-modal="false"><el-form label-position="top"><el-form-item label="课程 / 教学班"><el-select v-model="launchClass" placeholder="请选择课程"><el-option v-for="c in activeClasses" :key="c.id" :value="c.id" :label="`${c.course_name} · ${c.name}`" /></el-select></el-form-item><el-form-item label="签到时长（分钟）"><el-input-number v-model="duration" :min="1" :max="180" :precision="0" /></el-form-item><el-form-item label="开始后多少分钟记为迟到"><el-input-number v-model="lateMinutes" :min="0" :max="duration || 180" :precision="0" /></el-form-item><el-alert title="确认后立即开始考勤" description="学生可通过 Android 端签到；教师可人工登记。签到截止后请在考勤记录中结束任务并复核结果。" type="info" :closable="false" /></el-form><template #footer><el-button :disabled="saving" @click="launch = false">取消</el-button><el-button type="primary" :loading="saving" @click="createTask">开始考勤</el-button></template></el-dialog>
   </el-container>
 </template>

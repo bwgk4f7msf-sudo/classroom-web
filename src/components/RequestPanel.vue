@@ -24,8 +24,60 @@ onMounted(load)
 defineExpose({ load })
 </script>
 <template>
-  <el-card shadow="never" class="section-gap"><template #header><div class="section-heading"><h2>{{ title || (admin ? '申请审核' : '我的申请') }}</h2><el-button @click="refresh">刷新申请</el-button></div></template>
-    <el-table :data="displayedItems" empty-text="暂无申请"><el-table-column prop="username" label="申请账号" /><el-table-column label="类型"><template #default="{ row }">{{ kinds[row.kind] }}</template></el-table-column><el-table-column label="状态"><template #default="{ row }">{{ states[row.status] }}</template></el-table-column><el-table-column prop="review_note" label="审核说明" /><el-table-column label="操作" min-width="200"><template #default="{ row }"><el-button link @click="selected = row">查看详情</el-button><template v-if="admin && row.status === 'pending'"><el-button v-if="row.kind === 'password_reset'" link type="primary" @click="router.push('/dashboard/users')">去重设密码并解禁</el-button><template v-else><el-button link type="primary" :disabled="busy" @click="review(row, 'approved')">批准</el-button><el-button link type="danger" :disabled="busy" @click="review(row, 'rejected')">拒绝</el-button></template></template></template></el-table-column></el-table>
+  <el-card shadow="never" class="section-gap">
+    <template #header>
+      <div class="section-heading">
+        <h2>{{ title || (admin ? '申请审核' : '我的申请') }}</h2>
+        <el-button @click="refresh">刷新申请</el-button>
+      </div>
+    </template>
+    <el-table :data="displayedItems" empty-text="暂无申请">
+      <el-table-column prop="username" label="申请账号" />
+      <el-table-column label="类型">
+        <template #default="{ row }">{{ kinds[row.kind] }}</template>
+      </el-table-column>
+      <el-table-column label="状态">
+        <template #default="{ row }">{{ states[row.status] }}</template>
+      </el-table-column>
+      <el-table-column prop="review_note" label="审核说明" />
+      <el-table-column label="操作" min-width="200">
+        <template #default="{ row }">
+          <el-button link @click="selected = row">查看详情</el-button>
+          <template v-if="admin && row.status === 'pending'">
+            <el-button
+              v-if="row.kind === 'password_reset'"
+              link type="primary"
+              @click="router.push('/dashboard/users')"
+            >去重设密码并解禁</el-button>
+            <el-button
+              v-else
+              link type="primary" :disabled="busy"
+              @click="review(row, 'approved')"
+            >批准</el-button>
+            <el-button
+              link type="danger" :disabled="busy"
+              @click="review(row, 'rejected')"
+            >拒绝</el-button>
+          </template>
+        </template>
+      </el-table-column>
+    </el-table>
   </el-card>
-  <el-dialog :model-value="!!selected" title="申请详情" width="min(640px, 94vw)" @close="selected = null"><template v-if="selected"><p>申请人：{{ selected.username }} · {{ kinds[selected.kind] }} · 目标 ID：{{ selected.target_id || '新课程' }}</p><p>申请时间：{{ selected.created_at }}；审核时间：{{ selected.reviewed_at || '尚未审核' }}</p><el-descriptions :column="1" border><el-descriptions-item v-for="[label, value] in fields(selected.payload)" :key="label" :label="label">{{ value }}</el-descriptions-item></el-descriptions><p v-if="selected.kind.includes('course') || selected.kind === 'session_update'">课程时间均为北京时间。</p><p>{{ selected.review_note }}</p></template></el-dialog>
+  <el-dialog
+    :model-value="!!selected" title="申请详情"
+    width="min(640px, 94vw)" @close="selected = null"
+  >
+    <template v-if="selected">
+      <p>申请人：{{ selected.username }} · {{ kinds[selected.kind] }} · 目标 ID：{{ selected.target_id || '新课程' }}</p>
+      <p>申请时间：{{ selected.created_at }}；审核时间：{{ selected.reviewed_at || '尚未审核' }}</p>
+      <el-descriptions :column="1" border>
+        <el-descriptions-item
+          v-for="[label, value] in fields(selected.payload)"
+          :key="label" :label="label"
+        >{{ value }}</el-descriptions-item>
+      </el-descriptions>
+      <p v-if="selected.kind.includes('course') || selected.kind === 'session_update'">课程时间均为北京时间。</p>
+      <p>{{ selected.review_note }}</p>
+    </template>
+  </el-dialog>
 </template>

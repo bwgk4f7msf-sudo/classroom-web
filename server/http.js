@@ -32,6 +32,7 @@ export async function authenticate(req, _res, next) {
   next()
 }
 export const roles = (...allowed) => (req, _res, next) => {
+  if (!req.user) fail(401, '请先登录', 'UNAUTHENTICATED')
   if (!allowed.includes(req.user.role)) fail(403, '没有操作权限', 'FORBIDDEN')
   next()
 }

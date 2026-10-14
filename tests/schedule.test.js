@@ -1,3 +1,4 @@
+import { captchaDigest } from '../server/captcha.js'
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
@@ -28,7 +29,8 @@ async function client(username, role) {
   }
   await request('/captcha')
   const sid = decodeURIComponent(cookie.split('=')[1]).slice(2).split('.')[0]
-  const code = (await db.get('SELECT text FROM captchas WHERE session_id=?', [sid])).text
+  const code = 'ABCDE'
+  await db.run('UPDATE captchas SET text=? WHERE session_id=?', [captchaDigest(code), sid])
   await request('/auth/login', 'POST', { username, password: 'Schedule-test123', code })
   return request
 }
@@ -113,7 +115,11 @@ test('persisted teacher scheduling, role isolation, collisions, rescheduling and
   await student(`/notifications/${notices[0].id}/close`, 'PATCH', {})
   assert.equal((await student('/notifications')).items.length, 1)
   await admin(`/scheduled-courses/${created.id}/students`, 'POST', { student_no: 'unrelated_student' }, 201)
-  assert.equal((await teacher('/student-candidates?q=unrelated')).items[0].student_no, 'unrelated_student')
+  for (const query of ['unrelated', '%', '_', 'unrelated%']) {
+    assert.equal((await teacher('/student-candidates?q=' + encodeURIComponent(query))).items.length, 0)
+  }
+  assert.equal((await admin('/student-candidates?q=unrelated')).items[0].student_no, 'unrelated_student')
+  assert.equal((await teacher('/student-candidates?q=unrelated_student')).items[0].student_no, 'unrelated_student')
   const cancellation = await teacher(`/scheduled-courses/${created.id}/cancel`, 'POST', { reason: '停开' }, 202)
   assert.equal((await student('/schedule')).classes[0].status, 'active')
   await approve(cancellation)

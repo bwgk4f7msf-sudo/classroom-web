@@ -8,6 +8,7 @@ Vue 3 + Vite + Element Plus 网页端，Express 业务后端。提供课程排�
 
 ```sh
 npm install
+# 首次运行：复制 .env.example 为 .env，设置 ADMIN_PASSWORD（至少 12 位且含数字和非数字）
 npm run dev
 ```
 
@@ -87,7 +88,7 @@ classroom-web/
 
 默认继续使用 `server/db/classroom.db`，启动时非破坏性补齐表、用户 password_hash/status 及学生/教师资料；已有 password 哈希保留，旧 scrypt 登录成功后升级为 bcrypt。首次运行前建议备份原数据库（停服后复制数据库及 WAL/SHM，或使用 SQLite backup）。SQLite 文件不会自动迁入 MySQL。
 
-新数据库初次启动创建 admin。可通过 ADMIN_PASSWORD 指定初始密码（至少 12 位，最多 72 字节，包含数字和非数字）；未指定则仅在开发模式将随机密码写入数据库目录的 `admin-credentials.txt`。登录后可通过 `PATCH /api/auth/password` 改密，再删除该凭据文件。已有管理员不受 ADMIN_PASSWORD 变更影响。
+新数据库初次启动创建 admin，必须通过 ADMIN_PASSWORD 指定初始密码（至少 12 位，最多 72 字节，包含数字和非数字）。不再生成明文凭据文件；旧部署若保留 `admin-credentials.txt`，请在确认已改密后删除。已有管理员不受 ADMIN_PASSWORD 变更影响。
 
 公开注册的学生可直接登录；教师需管理员通过 `PATCH /api/users/{id}` 设置 `{"status":"active"}` 审核。网页已提供管理员、教师和学生工作台，包括课程、用户管理、申请审核、账户设置与考勤页面。
 
@@ -118,15 +119,15 @@ classroom-web/
 
 ### 添加学生与课程通知
 
-- 教师只能为自己的有效教学班添加学生，管理员可为任意有效教学班添加学生。在「添加学生」输入学号或姓名，下方会显示最多 20 个有效学生候选项；选择候选后按学号加入。同名学生请核对学号。
+- 教师只能为自己的有效教学班添加学生，管理员可为任意有效教学班添加学生。在「添加学生」中，教师必须输入完整学号精确查询，最多返回一个有效学生；管理员仍可按学号或姓名模糊查询最多 20 个候选项。核对姓名后按学号加入。
 - 调课、课程信息修改或取消真正生效后，系统为该教学班当前有效选课学生保存通知；待审批和被拒绝的变更不会发送通知。
 - 学生登录工作台时读取未关闭通知，在线期间每 15 秒检查一次。通知使用 Element Plus `ElNotification`，显示在右下角，`duration: 0`，须手动点击关闭按钮。最多同时显示 3 条，其余依次补充；刷新、退出或离线不会将其标记为已读，重新登录仍会显示。关闭状态按用户保存在服务端。
 
 ### 忘记密码与管理员重置
 
 1. 在登录页点击「忘记密码？申请重置」，选择学生或教师，填写账号、注册学号 / 工号、当前姓名和一次性验证码；管理员账号不支持此入口。
-2. 身份字段匹配并成功提交后，账号立即停用，已有登录会话全部撤销，申请进入管理员审核列表。此时无法登录，请联系管理员核实身份。
-3. 管理员进入「用户管理 → 学生与教师资料」，找到该用户并点击「重设密码并解禁」。输入符合规则的新密码后，系统在同一事务中重设密码、启用账号、完成待处理重置申请并撤销旧会话。单独点击「批准 / 启用」不能跳过待处理的密码重置。
+2. 身份字段匹配后，仅生成管理员待办，账号状态及现有登录不变。每账号 24 小时最多提交一次（含已处理申请），已有同类待办也不重复创建。请联系管理员核实身份。
+3. 管理员进入「用户管理 → 学生与教师资料」，找到该用户并点击「重设密码并解禁」。输入符合规则的新密码后，系统在同一事务中重设密码、启用账号、完成待处理重置申请并撤销旧会话。管理员也可在申请列表拒绝错误或恶意重置申请；账号启停与申请状态独立。
 4. 管理员通过可信渠道将新密码告知用户；用户登录后可在「设置」自行修改。密码至少 8 位、最多 72 字节，包含数字和非数字字符。管理员也可主动为学生、教师重设密码并解禁，无须先由用户申请。
 
 本次升级启动时自动新增 `change_requests` 与 `notifications` 表，兼容 SQLite / MySQL 建表逻辑，无须清空旧数据库。升级前建议备份数据库，部署时同时更新前后端并重启 API。
@@ -142,13 +143,13 @@ Express 同时提供 `dist` 和 `/api`。`npm run preview` 仅提供构建预览
 
 生产建议使用 MySQL 8.4：设置 `DB_DRIVER=mysql`、DB_HOST、DB_PORT、DB_NAME、DB_USER、DB_PASSWORD。数据库须预先存在，服务启动时创建表；数据库账户需要建表/升级权限。`server/db/schema.js` 为两种数据库的统一建表定义，db.js 执行幂等升级；默认 SQLite 用于本地兼容与快速测试。
 
-已提供 `Dockerfile`、`compose.yaml`，将前端和 API 打包为一个镜像，并依赖带持久卷和健康检查的 MySQL。准备 `.env` 中的 DB_PASSWORD、MYSQL_ROOT_PASSWORD、ADMIN_PASSWORD、至少 32 字符的 SESSION_SECRET，以及真实 HTTPS 域名 APP_ORIGINS，然后运行：
+已提供 `Dockerfile`、`compose.yaml`，将前端和 API 打包为一个镜像，并依赖带持久卷和健康检查的 MySQL。准备 `.env` 中的 DB_PASSWORD、MYSQL_ROOT_PASSWORD、ADMIN_PASSWORD、至少 32 字符的 SESSION_SECRET，真实 HTTPS 域名 APP_ORIGINS，以及反向代理实际来源 IP / 网段 TRUSTED_PROXIES，然后运行：
 
 ```sh
 docker compose up --build -d
 ```
 
-API 仅映射宿主机 `127.0.0.1:3001`；前置 Nginx/Caddy 提供 HTTPS，并覆盖设置 X-Forwarded-Proto/Host。生产 Cookie 强制 Secure，**直接 HTTP 访问生产容器不能正常保持登录**。只在可信单层反向代理后使用 TRUST_PROXY=1。数据库端口不映射到宿主机。稳定 SESSION_SECRET 使重启后会话继续有效；未设置时开发会话在 API 重启后失效。
+API 仅映射宿主机 `127.0.0.1:3001`；前置 Nginx/Caddy 提供 HTTPS，并覆盖设置 X-Forwarded-For/Proto/Host。生产 Cookie 强制 Secure，**直接 HTTP 访问生产容器不能正常保持登录**。仅在可信反向代理后使用 TRUST_PROXY=1，并设置 TRUSTED_PROXIES 为实际代理 IP / CIDR（逗号分隔，禁止全网段）；Docker 中填写容器实际看到的代理地址。网络层须限制 API 只能由代理访问。数据库端口不映射到宿主机。稳定 SESSION_SECRET 使重启后会话继续有效；未设置时开发会话在 API 重启后失效。
 
 CompreFace 是独立服务：按[官方部署说明](https://github.com/exadel-inc/CompreFace)部署，在管理界面创建 Recognition 服务，将它的 Key 写入服务端 COMPREFACE_API_KEY。COMPREFACE_URL 应指向其入口（容器内访问宿主机可用 `http://host.docker.internal:8000`），不能指向浏览器或 Android 客户端。Compose 不自动创建 CompreFace 的服务 Key，也不包含其整套模型容器。建议设置 `SAVE_IMAGES_TO_DB=false` 减少原图留存。
 

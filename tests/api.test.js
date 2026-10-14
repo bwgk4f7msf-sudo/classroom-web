@@ -1,3 +1,4 @@
+import { captchaDigest } from '../server/captcha.js'
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -54,10 +55,12 @@ function client() {
       const result = await this.request('/captcha')
       assert.match(result.image, /^data:image\/svg\+xml;base64,/)
       const sid = decodeURIComponent(this.cookie.split('=')[1]).slice(2).split('.')[0]
-      return (await db.get('SELECT text FROM captchas WHERE session_id=?', [sid])).text
+      assert.match((await db.get('SELECT text FROM captchas WHERE session_id=?', [sid])).text, /^[a-f0-9]{64}$/)
+      await db.run('UPDATE captchas SET text=? WHERE session_id=?', [captchaDigest('ABCDE'), sid])
+      return 'ABCDE'
     },
     async register(username, role) {
-      return this.request('/auth/register', 'POST', { username, role, name: username, student_no: username, teacher_no: username, password: 'Password123', code: await this.captcha() }, 201)
+      return this.request('/auth/register', 'POST', { username, role, name: username, student_no: username, teacher_no: username, password: 'Password123', code: await this.captcha() }, 202)
     },
     async login(username, password = 'Password123', status = 200) {
       return this.request('/auth/login', 'POST', { username, password, code: await this.captcha() }, status)
@@ -73,12 +76,15 @@ const admin = client(), teacher = client(), other = client(), learner = client()
 let classId, teacherId, studentId, taskId
 const taskBody = () => ({ teaching_class_id: classId, start_at: new Date(Date.now() - 60000).toISOString(), late_at: new Date(Date.now() + 60000).toISOString(), end_at: new Date(Date.now() + 600000).toISOString() })
 
-test('identity registration, immutable numbers, name approval and password reset suspension', async () => {
+test('identity registration, immutable numbers, name approval and password reset preserves availability', async () => {
   const manager = client(), person = client(), anonymous = client()
   await manager.login('admin', process.env.ADMIN_PASSWORD)
   await person.request('/auth/register', 'POST', { username: 'profile_test', role: 'student', password: 'Password123', code: await person.captcha() }, 400)
-  await person.request('/auth/register', 'POST', { username: 'profile_test', role: 'student', student_no: 'S2026001', name: '张三', password: 'Password123', code: await person.captcha() }, 201)
-  await anonymous.request('/auth/register', 'POST', { username: 'duplicate_test', role: 'student', student_no: 'S2026001', name: '张三', password: 'Password123', code: await anonymous.captcha() }, 409)
+  const registered = await person.request('/auth/register', 'POST', { username: 'profile_test', role: 'student', student_no: 'S2026001', name: '张三', password: 'Password123', code: await person.captcha() }, 202)
+  const duplicate = await anonymous.request('/auth/register', 'POST', { username: 'duplicate_test', role: 'student', student_no: 'S2026001', name: '张三', password: 'Password123', code: await anonymous.captcha() }, 202)
+  assert.deepEqual(duplicate, registered)
+  const duplicateUsername = await anonymous.request('/user/register', 'POST', { username: 'profile_test', role: 'student', student_no: 'OTHER', name: '张三', password: 'Password123', code: await anonymous.captcha() }, 202)
+  assert.deepEqual(duplicateUsername, registered)
   assert.equal(await db.get('SELECT id FROM users WHERE username=?', ['duplicate_test']), undefined)
   await person.login('profile_test')
   const profile = (await person.request('/profile')).profile
@@ -94,18 +100,20 @@ test('identity registration, immutable numbers, name approval and password reset
   assert.equal((await person.request('/profile')).profile.name, '张小三')
   await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'wrong', name: '张小三', code: await anonymous.captcha() }, 400)
   await anonymous.request('/auth/reset-request', 'POST', { username: 'admin', role: 'admin', number: 'admin', name: 'admin', code: await anonymous.captcha() }, 400)
-  const oldCookie = person.cookie
   await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'S2026001', name: '张小三', code: await anonymous.captcha() }, 202)
-  await person.request('/auth/me', 'GET', undefined, 401)
-  await person.login('profile_test', 'Password123', 403)
-  await manager.request(`/users/${profile.user_id}`, 'PATCH', { status: 'active' }, 409)
+  await person.request('/auth/me')
+  await person.login('profile_test')
+  await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'S2026001', name: '张小三', code: await anonymous.captcha() }, 429)
+  await manager.request(`/users/${profile.user_id}`, 'PATCH', { status: 'active' })
+  const currentCookie = person.cookie
   await manager.request(`/users/${profile.user_id}/reset-password`, 'POST', { password: 'short' }, 400)
   await manager.request(`/users/${profile.user_id}/reset-password`, 'POST', { password: 'New-password123' })
-  person.cookie = oldCookie
+  person.cookie = currentCookie
   await person.request('/auth/me', 'GET', undefined, 401)
   await person.login('profile_test', 'Password123', 401)
   await person.login('profile_test', 'New-password123')
   assert.equal((await person.request('/requests')).items.find(r => r.kind === 'password_reset').status, 'approved')
+  await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'S2026001', name: '张小三', code: await anonymous.captcha() }, 429)
 })
 
 test('registration, teacher approval, captcha consumption, and live role checks', async () => {
@@ -126,13 +134,29 @@ test('registration, teacher approval, captcha consumption, and live role checks'
   await outsider.request('/auth/login', 'POST', { username: 'student2', password: 'Password123', code }, 400)
   await outsider.login('student2')
 })
+test('teacher reset requests preserve sessions and can be rejected without changing the account', async () => {
+  const anonymous = client()
+  const requestBody = {
+    username: 'teacher1', role: 'teacher', number: 'teacher1', name: 'teacher1',
+    code: await anonymous.captcha(),
+  }
+  await anonymous.request('/auth/reset-request', 'POST', requestBody, 202)
+  await teacher.request('/auth/me')
+  const request = (await admin.request('/requests')).items.find(row => row.kind === 'password_reset' && row.username === 'teacher1')
+  await admin.request(`/requests/${request.id}`, 'PATCH', { status: 'approved', note: '须专用重置' }, 409)
+  await admin.request(`/requests/${request.id}`, 'PATCH', { status: 'rejected', note: '本人未申请，拒绝恶意待办' })
+  await teacher.request('/auth/me')
+  await anonymous.request('/auth/reset-request', 'POST', { ...requestBody, code: await anonymous.captcha() }, 429)
+})
+
 test('basic data, ownership, membership and time validation', async () => {
   teacherId = (await admin.request('/teachers')).items.find((t) => t.name === 'teacher1').id
   studentId = (await admin.request('/students')).items.find((s) => s.name === 'student1').id
   const course = await admin.request('/courses', 'POST', { course_code: 'CS101', course_name: '软件工程', credit: 3 }, 201)
   classId = (await admin.request('/teaching-classes', 'POST', { course_id: course.id, teacher_id: teacherId, term: '2026秋', name: '软件一班' }, 201)).id
   await teacher.request(`/teaching-classes/${classId}/enrollments`, 'POST', { student_id: studentId }, 201)
-  await teacher.request(`/teaching-classes/${classId}/enrollments`, 'POST', { student_id: studentId }, 409)
+  const duplicate = await teacher.request(`/teaching-classes/${classId}/enrollments`, 'POST', { student_id: studentId }, 409)
+  assert.equal(duplicate.code, undefined)
   assert.equal((await learner.request('/teaching-classes')).items.length, 1)
   assert.equal((await other.request('/teaching-classes')).items.length, 0)
   await other.request('/attendance-tasks', 'POST', taskBody(), 403)
