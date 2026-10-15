@@ -3,7 +3,8 @@ import { audit, fail, now } from './http.js'
 
 export async function submitRequest(req, kind, targetId, payload) {
   return db.transaction(async () => {
-    await db.get('SELECT id FROM users WHERE id=?' + db.lock, [req.user.id])
+    const user = await db.get('SELECT id,status FROM users WHERE id=?' + db.lock, [req.user.id])
+    if (!user || user.status === 'deleted') fail(401, '请先登录', 'UNAUTHENTICATED')
     const pending = await db.all("SELECT payload FROM change_requests WHERE user_id=? AND kind=? AND target_id=? AND status='pending'", [req.user.id, kind, targetId || 0])
     if (pending.some(row => kind !== 'course_create' || row.payload === JSON.stringify(payload))) fail(409, '已有同类申请待审核，请勿重复提交')
     const result = await db.run('INSERT INTO change_requests(user_id,kind,target_id,payload,created_at) VALUES (?,?,?,?,?)', [req.user.id, kind, targetId || 0, JSON.stringify(payload), now()])

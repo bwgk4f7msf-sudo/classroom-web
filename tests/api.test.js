@@ -76,7 +76,7 @@ const admin = client(), teacher = client(), other = client(), learner = client()
 let classId, teacherId, studentId, taskId
 const taskBody = () => ({ teaching_class_id: classId, start_at: new Date(Date.now() - 60000).toISOString(), late_at: new Date(Date.now() + 60000).toISOString(), end_at: new Date(Date.now() + 600000).toISOString() })
 
-test('identity registration, immutable numbers, name approval and password reset preserves availability', async () => {
+test('identity registration, immutable numbers, name approval and password reset blocks old credentials', async () => {
   const manager = client(), person = client(), anonymous = client()
   await manager.login('admin', process.env.ADMIN_PASSWORD)
   await person.request('/auth/register', 'POST', { username: 'profile_test', role: 'student', password: 'Password123', code: await person.captcha() }, 400)
@@ -101,8 +101,8 @@ test('identity registration, immutable numbers, name approval and password reset
   await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'wrong', name: '张小三', code: await anonymous.captcha() }, 400)
   await anonymous.request('/auth/reset-request', 'POST', { username: 'admin', role: 'admin', number: 'admin', name: 'admin', code: await anonymous.captcha() }, 400)
   await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'S2026001', name: '张小三', code: await anonymous.captcha() }, 202)
-  await person.request('/auth/me')
-  await person.login('profile_test')
+  await person.request('/auth/me', 'GET', undefined, 401)
+  await person.login('profile_test', 'Password123', 403)
   await anonymous.request('/auth/reset-request', 'POST', { username: 'profile_test', role: 'student', number: 'S2026001', name: '张小三', code: await anonymous.captcha() }, 429)
   await manager.request(`/users/${profile.user_id}`, 'PATCH', { status: 'active' })
   const currentCookie = person.cookie
@@ -134,18 +134,20 @@ test('registration, teacher approval, captcha consumption, and live role checks'
   await outsider.request('/auth/login', 'POST', { username: 'student2', password: 'Password123', code }, 400)
   await outsider.login('student2')
 })
-test('teacher reset requests preserve sessions and can be rejected without changing the account', async () => {
+test('teacher reset requests revoke sessions until rejected or completed', async () => {
   const anonymous = client()
   const requestBody = {
     username: 'teacher1', role: 'teacher', number: 'teacher1', name: 'teacher1',
     code: await anonymous.captcha(),
   }
   await anonymous.request('/auth/reset-request', 'POST', requestBody, 202)
-  await teacher.request('/auth/me')
+  await teacher.request('/auth/me', 'GET', undefined, 401)
+  await teacher.login('teacher1', 'Password123', 403)
   const request = (await admin.request('/requests')).items.find(row => row.kind === 'password_reset' && row.username === 'teacher1')
   await admin.request(`/requests/${request.id}`, 'PATCH', { status: 'approved', note: '须专用重置' }, 409)
   await admin.request(`/requests/${request.id}`, 'PATCH', { status: 'rejected', note: '本人未申请，拒绝恶意待办' })
-  await teacher.request('/auth/me')
+  await teacher.request('/auth/me', 'GET', undefined, 401)
+  await teacher.login('teacher1')
   await anonymous.request('/auth/reset-request', 'POST', { ...requestBody, code: await anonymous.captcha() }, 429)
 })
 

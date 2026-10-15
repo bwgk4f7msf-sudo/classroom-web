@@ -4,6 +4,8 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { schema } from './schema.js'
+import { initializePersonnelNumbers } from './personnel-numbers.js'
+import { initializeSessions } from './session-migration.js'
 
 const context = new AsyncLocalStorage()
 const mysql = process.env.DB_DRIVER === 'mysql'
@@ -92,4 +94,10 @@ if (!hasColumn('password_hash')) {
 db.legacyPassword = hasColumn('password')
 await db.run("INSERT INTO students(user_id,student_no,name,class_name) SELECT id,username,username,'' FROM users WHERE role='student' AND id NOT IN (SELECT user_id FROM students)")
 await db.run("INSERT INTO teachers(user_id,teacher_no,name) SELECT id,username,username FROM users WHERE role='teacher' AND id NOT IN (SELECT user_id FROM teachers)")
+await initializePersonnelNumbers(db)
+await initializeSessions(db)
+const enrollmentColumns = mysql ? await db.all('SHOW COLUMNS FROM enrollments') : await db.all('PRAGMA table_info(enrollments)')
+if (!enrollmentColumns.some(column => (column.name || column.Field) === 'revision')) {
+  await db.run('ALTER TABLE enrollments ADD COLUMN revision INTEGER NOT NULL DEFAULT 1')
+}
 export default db

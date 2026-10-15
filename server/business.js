@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import db from './db/db.js'
 import { notifyClass } from './requests.js'
+import { listEnrollments, removeEnrollment } from './enrollments.js'
 import { authenticate, roles, student, ownedClass, id, string, choice, fail, audit, now } from './http.js'
 
 export const business = Router()
@@ -46,20 +47,6 @@ business.delete('/courses/:id', admin, async (req, res) => {
   await mutation(req, 'archive', 'courses', () => db.run("UPDATE courses SET status='archived' WHERE id=?", [id(req.params.id)]))
   res.json({ success: true })
 })
-for (const table of ['students', 'teachers']) {
-  const numberField = table === 'students' ? 'student_no' : 'teacher_no'
-  business.get(`/${table}`, admin, async (_req, res) => res.json({ items: await db.all(`SELECT * FROM ${table} ORDER BY id`) }))
-  business.patch(`/${table}/:id`, admin, async (req, res) => {
-    const row = await db.get(`SELECT * FROM ${table} WHERE id=?`, [id(req.params.id)])
-    if (!row) fail(404, '人员资料不存在')
-    if (req.body[numberField] !== undefined && req.body[numberField] !== row[numberField]) fail(400, '学号 / 工号注册后不可修改')
-    await mutation(req, 'update', table, async () => {
-      await db.run(`UPDATE ${table} SET ${numberField}=?,name=? WHERE id=?`, [string(req.body[numberField] ?? row[numberField], '学工号', 64), string(req.body.name ?? row.name, '姓名', 80), row.id])
-      if (table === 'students' && req.body.class_name !== undefined) await db.run('UPDATE students SET class_name=? WHERE id=?', [req.body.class_name === '' ? '' : string(req.body.class_name, '班级'), row.id])
-    })
-    res.json({ success: true })
-  })
-}
 business.get('/teaching-classes', async (req, res) => {
   let sql = 'SELECT c.*,co.course_name,t.name AS teacher_name FROM teaching_classes c JOIN courses co ON co.id=c.course_id JOIN teachers t ON t.id=c.teacher_id'
   const params = []
@@ -84,20 +71,32 @@ business.delete('/teaching-classes/:id', admin, async (req, res) => {
   await mutation(req, 'archive', 'teaching_classes', () => db.run("UPDATE teaching_classes SET status='archived' WHERE id=?", [id(req.params.id)]))
   res.json({ success: true })
 })
-business.get('/teaching-classes/:id/enrollments', roles('admin', 'teacher'), async (req, res) => {
-  if (req.user.role === 'teacher') await ownedClass(req, req.params.id)
-  res.json({ items: await db.all('SELECT e.*,s.student_no,s.name FROM enrollments e JOIN students s ON s.id=e.student_id WHERE e.teaching_class_id=?', [id(req.params.id)]) })
-})
+business.get('/teaching-classes/:id/enrollments', roles('admin', 'teacher'), listEnrollments)
+business.delete('/enrollments/:id', roles('admin', 'teacher'), removeEnrollment)
 business.post('/teaching-classes/:id/enrollments', roles('admin', 'teacher'), async (req, res) => {
   if (req.user.role === 'teacher') await ownedClass(req, req.params.id)
-  const result = await mutation(req, 'enroll', 'enrollments', () => db.run('INSERT INTO enrollments(teaching_class_id,student_id) VALUES (?,?)', [id(req.params.id), id(req.body.student_id)]))
+  const result = await mutation(req, 'enroll', 'enrollments', async () => {
+    const learner = await db.get(`SELECT s.id FROM students s JOIN users u ON u.id=s.user_id
+      WHERE s.id=? AND u.status='active'` + db.lock, [id(req.body.student_id)])
+    if (!learner) fail(404, '有效学生账号不存在')
+    return db.run('INSERT INTO enrollments(teaching_class_id,student_id) VALUES (?,?)', [id(req.params.id), learner.id])
+  })
   res.status(201).json({ id: result.insertId })
 })
 business.patch('/enrollments/:id', roles('admin', 'teacher'), async (req, res) => {
+  if (req.body.status === 'withdrawn') return removeEnrollment(req, res)
   const row = await db.get('SELECT * FROM enrollments WHERE id=?', [id(req.params.id)])
   if (!row) fail(404, '选课关系不存在')
   if (req.user.role === 'teacher') await ownedClass(req, row.teaching_class_id)
-  await mutation(req, 'update', 'enrollments', () => db.run('UPDATE enrollments SET status=? WHERE id=?', [choice(req.body.status, ['active', 'withdrawn']), row.id]))
+  await mutation(req, 'update', 'enrollments', async () => {
+    const status = choice(req.body.status, ['active', 'withdrawn'])
+    if (status === 'active') {
+      const learner = await db.get(`SELECT s.id FROM students s JOIN users u ON u.id=s.user_id
+        WHERE s.id=? AND u.status='active'` + db.lock, [row.student_id])
+      if (!learner) fail(404, '有效学生账号不存在')
+    }
+    await db.run('UPDATE enrollments SET status=?,revision=revision+1 WHERE id=?', [status, row.id])
+  })
   res.json({ success: true })
 })
 business.post('/attendance-tasks', teacher, async (req, res) => {

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import api from './api.js'
+import api, { setUnauthorizedHandler } from './api.js'
 
 export const user = ref(null)
 export const loggingOut = ref(false)
@@ -9,6 +9,13 @@ export function setUser(value) {
   revision++
   user.value = value
 }
+
+setUnauthorizedHandler(() => {
+  const requestRevision = revision
+  return () => {
+    if (requestRevision === revision) setUser(null)
+  }
+})
 
 export async function loadUser() {
   const requestRevision = revision

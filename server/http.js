@@ -1,4 +1,5 @@
 import db from './db/db.js'
+import { resetPending } from './session-policy.js'
 
 export function fail(status, message, code) {
   const error = new Error(message)
@@ -28,7 +29,9 @@ export async function audit(req, action, type, resource, result = 'success') {
 export async function authenticate(req, _res, next) {
   const active = await db.get('SELECT sid FROM sessions WHERE sid=? AND expires>?', [req.sessionID, Date.now()])
   req.user = active && req.session.userId ? await db.get('SELECT id,username,role,status,avatar FROM users WHERE id=?', [req.session.userId]) : null
-  if (!req.user || req.user.status !== 'active') fail(401, '请先登录', 'UNAUTHENTICATED')
+  if (!req.user || req.user.status !== 'active' || await resetPending(req.user.id)) {
+    fail(401, '请先登录', 'UNAUTHENTICATED')
+  }
   next()
 }
 export const roles = (...allowed) => (req, _res, next) => {

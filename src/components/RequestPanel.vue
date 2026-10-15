@@ -8,9 +8,26 @@ const router = useRouter()
 const emit = defineEmits(['changed'])
 const items = ref([]), busy = ref(false), selected = ref(null)
 const displayedItems = computed(() => props.requests ?? items.value)
-const kinds = { course_create: '新增课程', course_update: '修改课程安排', session_update: '单次调课', course_cancel: '取消课程', name_change: '修改姓名', password_reset: '重置密码' }
-const labels = { course_name: '中文课程名称', english_name: '英文课程名称', name: '姓名 / 教学班名称', term: '学期', reason: '原因', date: '日期', start: '开始时间', end: '结束时间', location: '地点', repeat: '重复方式', interval: '重复间隔', weekdays: '上课日', until: '结束日期' }
-function fields(payload) { return Object.entries({ ...payload, ...payload.schedule }).filter(([k]) => k !== 'schedule').map(([key, value]) => [labels[key] || key, key === 'repeat' ? ({ once: '不重复', daily: '按天', weekly: '按周' }[value] || value) : key === 'weekdays' ? value.map(d => '周' + '日一二三四五六'[d]).join('、') : value]) }
+const kinds = {
+  course_create: '新增课程', course_update: '修改课程安排',
+  session_update: '单次调课', course_cancel: '取消课程',
+  enrollment_remove: '移除课程学生', name_change: '修改姓名', password_reset: '重置密码',
+}
+const labels = {
+  course_name: '中文课程名称', english_name: '英文课程名称', name: '姓名 / 教学班名称',
+  student_no: '学生学号', student_name: '学生姓名', class_name: '教学班', term: '学期',
+  reason: '原因', date: '日期', start: '开始时间', end: '结束时间', location: '地点',
+  repeat: '重复方式', interval: '重复间隔', weekdays: '上课日', until: '结束日期',
+}
+function fields(payload) {
+  return Object.entries({ ...payload, ...payload.schedule })
+    .filter(([key]) => !['schedule', 'revision'].includes(key))
+    .map(([key, value]) => {
+      if (key === 'repeat') value = { once: '不重复', daily: '按天', weekly: '按周' }[value] || value
+      if (key === 'weekdays') value = value.map(day => '周' + '日一二三四五六'[day]).join('、')
+      return [labels[key] || key, value]
+    })
+}
 const states = { pending: '待审核', approved: '已批准', rejected: '已拒绝' }
 async function load() { if (props.requests !== null) return; try { items.value = (await api('/requests')).items } catch (e) { ElMessage.error(e.message) } }
 function refresh() { if (props.requests !== null) emit('changed'); else load() }
@@ -68,7 +85,7 @@ defineExpose({ load })
     width="min(640px, 94vw)" @close="selected = null"
   >
     <template v-if="selected">
-      <p>申请人：{{ selected.username }} · {{ kinds[selected.kind] }} · 目标 ID：{{ selected.target_id || '新课程' }}</p>
+      <p>申请人：{{ selected.username }} · {{ kinds[selected.kind] }}</p>
       <p>申请时间：{{ selected.created_at }}；审核时间：{{ selected.reviewed_at || '尚未审核' }}</p>
       <el-descriptions :column="1" border>
         <el-descriptions-item
@@ -76,7 +93,6 @@ defineExpose({ load })
           :key="label" :label="label"
         >{{ value }}</el-descriptions-item>
       </el-descriptions>
-      <p v-if="selected.kind.includes('course') || selected.kind === 'session_update'">课程时间均为北京时间。</p>
       <p>{{ selected.review_note }}</p>
     </template>
   </el-dialog>

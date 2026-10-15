@@ -9,6 +9,7 @@ import { business } from './business.js'
 import { scheduling } from './scheduling.js'
 import { workflows } from './workflows.js'
 import { faces } from './faces.js'
+import { users } from './users.js'
 import { fail } from './http.js'
 import { checkRequestSource, configureProxy, securityHeaders } from './security.js'
 
@@ -32,13 +33,16 @@ app.use(session({
   cookie: { ...cookieOptions, maxAge: sessionAge },
 }))
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
-app.use('/api', auth, business, scheduling, workflows, faces)
+app.use('/api', auth, business, scheduling, workflows, faces, users)
 app.use('/api', (_req, res) => res.status(404).json({ message: '接口不存在' }))
 app.use(express.static(fileURLToPath(new URL('../dist', import.meta.url))))
 app.use((error, _req, res, _next) => {
   let status = error.status || 500
   let message = error.message
-  if (['SQLITE_CONSTRAINT_UNIQUE', 'ER_DUP_ENTRY'].includes(error.code)) { status = 409; message = '数据已存在，请勿重复提交' }
+  if (['SQLITE_CONSTRAINT_UNIQUE', 'SQLITE_CONSTRAINT_PRIMARYKEY', 'ER_DUP_ENTRY'].includes(error.code)) {
+    status = 409
+    message = '数据已存在，请勿重复提交'
+  }
   if (['SQLITE_CONSTRAINT_FOREIGNKEY', 'ER_NO_REFERENCED_ROW_2', 'ER_ROW_IS_REFERENCED_2'].includes(error.code)) { status = 400; message = '关联数据不存在或仍被使用' }
   if (error.type === 'entity.too.large' || error.code === 'LIMIT_FILE_SIZE') { status = 413; message = '上传内容过大' }
   if (error.name === 'MulterError') { status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400; message = '仅允许上传一张不超过 5MB 的图片，字段名为 file' }

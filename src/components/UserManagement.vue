@@ -1,27 +1,123 @@
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api.js'
+import UserProfileEditor from './UserProfileEditor.vue'
+import { personRow } from '@/user-management.js'
+
+const props = defineProps({ accounts: Array })
 const emit = defineEmits(['changed'])
-const people = ref([]), selected = ref(null), busy = ref(false)
-const form = reactive({ name: '', class_name: '' })
+const people = ref([])
+const selected = ref(null)
+const busy = ref(false)
+let version = 0
+
 async function load() {
-  try { const [students, teachers] = await Promise.all([api('/students'), api('/teachers')]); people.value = [...students.items.map(p => ({ ...p, type: 'students', number: p.student_no })), ...teachers.items.map(p => ({ ...p, type: 'teachers', number: p.teacher_no }))] } catch (e) { ElMessage.error(e.message) }
+  const request = ++version
+  try {
+    const [students, teachers] = await Promise.all([
+      api('/students', { cache: 'no-store' }), api('/teachers', { cache: 'no-store' }),
+    ])
+    if (request !== version) return
+    people.value = [
+      ...students.items.map(p => personRow(p, 'students')),
+      ...teachers.items.map(p => personRow(p, 'teachers')),
+    ]
+  } catch (error) {
+    if (request === version) ElMessage.error(error.message)
+  }
 }
-function edit(row) { selected.value = row; form.name = row.name; form.class_name = row.class_name || '' }
-async function save() {
-  busy.value = true
-  try { await api(`/${selected.value.type}/${selected.value.id}`, { method: 'PATCH', body: JSON.stringify(selected.value.type === 'students' ? form : { name: form.name }) }); selected.value = null; await load(); emit('changed'); ElMessage.success('资料已更新') } catch (e) { ElMessage.error(e.message) } finally { busy.value = false }
-}
+
 async function reset(row) {
+  if (busy.value || !row.reset_requested) return
   let password
-  try { password = (await ElMessageBox.prompt(`请先核实「${row.name} / ${row.number}」的身份。设置新密码后账号立即解禁，旧登录全部失效。请通过可信渠道告知用户。`, '重设密码并解禁', { inputType: 'password', inputValidator: v => (v?.length >= 8 && /\d/.test(v) && /[^0-9]/.test(v)) || '至少 8 位，包含数字和非数字字符' })).value } catch { return }
+  try {
+    const result = await ElMessageBox.prompt(
+      `为「${row.name} / ${row.number}」设置新密码`,
+      '重置密码并解禁',
+      {
+        inputType: 'password',
+        inputValidator: value => (
+          value?.length >= 8 && /\d/.test(value) && /[^0-9]/.test(value)
+        ) || '至少 8 位，包含数字和非数字字符',
+      },
+    )
+    password = result.value
+  } catch { return }
+
   busy.value = true
-  try { await api(`/users/${row.user_id}/reset-password`, { method: 'POST', body: JSON.stringify({ password }) }); emit('changed'); ElMessage.success('已重设密码并解禁') } catch (e) { ElMessage.error(e.message) } finally { busy.value = false }
+  try {
+    await api(`/users/${row.user_id}/reset-password`, {
+      method: 'POST', body: JSON.stringify({ password }),
+    })
+    await load()
+    emit('changed')
+    ElMessage.success('已重置密码并解禁')
+  } catch (error) {
+    ElMessage.error(error.message)
+    await load()
+  } finally { busy.value = false }
 }
-onMounted(load)
+
+async function remove(row) {
+  if (busy.value) return
+  const consequence = row.type === 'teachers'
+    ? '其课程将归档。'
+    : '其选课将退出。'
+  try {
+    await ElMessageBox.confirm(
+      `确认移除「${row.name} / ${row.number}」？该用户将退出登录。${consequence}`,
+      '移除用户',
+      { type: 'warning', confirmButtonText: '确认移除', cancelButtonText: '取消' },
+    )
+  } catch { return }
+
+  busy.value = true
+  try {
+    await api(`/users/${row.user_id}`, { method: 'DELETE' })
+    await load()
+    emit('changed')
+    ElMessage.success('用户已移除，全部登录已失效')
+  } catch (error) { ElMessage.error(error.message) } finally { busy.value = false }
+}
+
+async function saved() {
+  selected.value = null
+  await load()
+  emit('changed')
+}
+watch(() => props.accounts, load, { immediate: true })
 </script>
+
 <template>
-  <el-card shadow="never" class="section-gap"><template #header><h2>学生与教师资料</h2></template><el-table :data="people"><el-table-column prop="number" label="学号 / 工号" /><el-table-column prop="name" label="姓名" /><el-table-column label="身份"><template #default="{ row }">{{ row.type === 'students' ? '学生' : '教师' }}</template></el-table-column><el-table-column prop="class_name" label="班级" /><el-table-column label="操作" min-width="210"><template #default="{ row }"><el-button link @click="edit(row)">修改资料</el-button><el-button link type="primary" :disabled="busy" @click="reset(row)">重设密码并解禁</el-button></template></el-table-column></el-table></el-card>
-  <el-dialog :model-value="!!selected" title="修改用户资料" width="min(480px, 94vw)" @close="selected = null"><el-form label-position="top"><el-form-item label="学号 / 工号（不可修改）"><el-input :model-value="selected?.number" disabled /></el-form-item><el-form-item label="姓名"><el-input v-model="form.name" maxlength="80" /></el-form-item><el-form-item v-if="selected?.type === 'students'" label="班级"><el-input v-model="form.class_name" maxlength="100" /></el-form-item></el-form><template #footer><el-button type="primary" :loading="busy" @click="save">保存资料</el-button></template></el-dialog>
+  <el-card shadow="never" class="section-gap">
+    <template #header><h2>学生与教师资料</h2></template>
+    <el-table :data="people" row-key="user_id">
+      <el-table-column prop="username" label="账号" min-width="110" />
+      <el-table-column label="学号 / 工号" min-width="160">
+        <template #default="{ row }">
+          {{ row.number }}
+          <el-tag v-if="row.number_conflict" type="danger" size="small">编号重复，需修正</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="name" label="姓名" min-width="100" />
+      <el-table-column label="身份" width="80">
+        <template #default="{ row }">{{ row.type === 'students' ? '学生' : '教师' }}</template>
+      </el-table-column>
+      <el-table-column prop="class_name" label="班级" min-width="100" />
+      <el-table-column label="操作" min-width="300">
+        <template #default="{ row }">
+          <el-button link :disabled="busy" @click="selected = row">修改资料</el-button>
+          <el-button
+            v-if="row.reset_requested" link type="primary"
+            :disabled="busy" @click="reset(row)"
+          >重置密码并解禁</el-button>
+          <el-button link type="danger" :disabled="busy" @click="remove(row)">
+            移除用户
+          </el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-card>
+  <UserProfileEditor :person="selected" @close="selected = null" @saved="saved" />
 </template>

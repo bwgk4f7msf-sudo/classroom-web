@@ -1,8 +1,8 @@
 import session from 'express-session'
 import db from './db/db.js'
+import { sessionAge, absoluteSessionAge, clientType, resetPending } from './session-policy.js'
 
-export const sessionAge = 7 * 24 * 60 * 60 * 1000
-export const absoluteSessionAge = 30 * 24 * 60 * 60 * 1000
+export { sessionAge, absoluteSessionAge }
 
 function expiresAt(value) {
   return Math.min(
@@ -42,12 +42,18 @@ export default class DatabaseSessionStore extends session.Store {
   }
   set(sid, value, callback = () => {}) {
     db.transaction(async () => {
+      if (value.userId) {
+        const user = await db.get('SELECT status FROM users WHERE id=?' + db.lock, [value.userId])
+        if (user?.status !== 'active' || await resetPending(value.userId)) return
+      }
       if (await db.get('SELECT sid FROM revoked_sessions WHERE sid=?' + db.lock, [sid])) return
       value.createdAt ??= Date.now()
       const expires = expiresAt(value)
       if (!Number.isFinite(expires) || expires <= Date.now()) return
       await db.run('DELETE FROM sessions WHERE sid=?', [sid])
-      await db.run('INSERT INTO sessions(sid,data,expires) VALUES (?,?,?)', [sid, JSON.stringify(value), expires])
+      await db.run(`INSERT INTO sessions(sid,data,expires,user_id,client_type) VALUES (?,?,?,?,?)`, [
+        sid, JSON.stringify(value), expires, value.userId || null, clientType(value),
+      ])
     }).then(() => callback(), callback)
   }
   touch(sid, value, callback = () => {}) {

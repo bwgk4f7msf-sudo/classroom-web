@@ -115,10 +115,12 @@ test('persisted teacher scheduling, role isolation, collisions, rescheduling and
   await student(`/notifications/${notices[0].id}/close`, 'PATCH', {})
   assert.equal((await student('/notifications')).items.length, 1)
   await admin(`/scheduled-courses/${created.id}/students`, 'POST', { student_no: 'unrelated_student' }, 201)
-  for (const query of ['unrelated', '%', '_', 'unrelated%']) {
+  for (const query of ['%', 'unrelated%']) {
     assert.equal((await teacher('/student-candidates?q=' + encodeURIComponent(query))).items.length, 0)
   }
   assert.equal((await admin('/student-candidates?q=unrelated')).items[0].student_no, 'unrelated_student')
+  assert.equal((await teacher('/student-candidates?q=unrelated')).items[0].student_no, 'unrelated_student')
+  assert.equal((await teacher('/student-candidates?q=unrelated_stu')).items[0].student_no, 'unrelated_student')
   assert.equal((await teacher('/student-candidates?q=unrelated_student')).items[0].student_no, 'unrelated_student')
   const cancellation = await teacher(`/scheduled-courses/${created.id}/cancel`, 'POST', { reason: '停开' }, 202)
   assert.equal((await student('/schedule')).classes[0].status, 'active')

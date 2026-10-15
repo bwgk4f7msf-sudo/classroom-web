@@ -1,29 +1,19 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
 import svgCaptcha from 'svg-captcha'
-import { scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import db from './db/db.js'
+import { reservePersonnelNumber } from './db/personnel-numbers.js'
 import { submitRequest } from './requests.js'
 import { authenticate, audit, fail, string, roles, choice, id } from './http.js'
 import { createAuthLimiter } from './auth-limits.js'
 import { captchaDigest, verifyCaptcha } from './captcha.js'
+import { login, refreshSession } from './login.js'
+import { revokeUserSessions } from './session-policy.js'
 
-const scrypt = promisify(scryptCallback)
+export { revokeUserSessions }
 export const cookieOptions = { path: '/', httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production' }
 const publicUser = ({ id, username, role, avatar }) => ({ id, username, role, avatar })
-export async function revokeUserSessions(userId) {
-  for (const row of await db.all('SELECT sid,data FROM sessions')) {
-    let data
-    try { data = JSON.parse(row.data) } catch { data = null }
-    if (!data || data.userId === userId) {
-      await db.run('DELETE FROM sessions WHERE sid=?', [row.sid])
-      if (!await db.get('SELECT sid FROM revoked_sessions WHERE sid=?', [row.sid])) {
-        await db.run('INSERT INTO revoked_sessions(sid,expires) VALUES (?,?)', [row.sid, Date.now() + 604800000])
-      }
-    }
-  }
-}
 export function validatePassword(password, min = 8) {
   if (typeof password !== 'string' || password.length < min || Buffer.byteLength(password) > 72 || !/\d/.test(password) || !/[^0-9]/.test(password)) {
     fail(400, `密码须至少 ${min} 位，最多 72 字节，并包含数字和非数字字符`)
@@ -32,6 +22,9 @@ export function validatePassword(password, min = 8) {
 export async function createUser(username, password, role, status = 'active', profile = {}) {
   const hash = await bcrypt.hash(password, 12)
   return db.transaction(async () => {
+    if (['student', 'teacher'].includes(role)) {
+      await reservePersonnelNumber(db, profile.number || username)
+    }
     const result = db.legacyPassword
       ? await db.run('INSERT INTO users(username,password,password_hash,role,status) VALUES (?,?,?,?,?)', [username, hash, hash, role, status])
       : await db.run('INSERT INTO users(username,password_hash,role,status) VALUES (?,?,?,?)', [username, hash, role, status])
@@ -82,6 +75,7 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
     await db.transaction(async () => {
       const target = await db.get('SELECT * FROM users WHERE username=?' + db.lock, [username])
       if (!target || target.role !== role) fail(400, '账号或身份资料不匹配')
+      if (target.status === 'deleted') fail(400, '账号或身份资料不匹配')
       const table = role === 'student' ? 'students' : 'teachers'
       const field = role === 'student' ? 'student_no' : 'teacher_no'
       const profile = await db.get(`SELECT * FROM ${table} WHERE user_id=?`, [target.id])
@@ -92,8 +86,9 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
       [target.id, new Date(Date.now() - 86_400_000).toISOString()])
       if (recent) fail(429, '该账号 24 小时内已提交过重置申请', 'RESET_RATE_LIMITED')
       await submitRequest(req, 'password_reset', target.id, {})
+      await revokeUserSessions(target.id)
     })
-    return res.status(202).json({ success: true, message: '申请已提交，请联系管理员核实身份并重设密码；账号和现有登录仍可正常使用' })
+    return res.status(202).json({ success: true, message: '申请已提交，请联系管理员重置密码' })
   }
   if (typeof password !== 'string' || Buffer.byteLength(password) > 72) fail(400, '密码长度不合法')
   if (req.path.endsWith('register')) {
@@ -102,7 +97,7 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
     const response = {
       success: true,
       requiresApproval: role === 'teacher',
-      message: '注册请求已受理。如资料可用，学生可直接登录，教师须等待管理员审核；如无法登录，请联系管理员。',
+      message: '注册请求已受理，登录异常请联系管理员',
     }
     // Teachers require approval; public registration must not grant staff privileges.
     let userId
@@ -112,7 +107,7 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
         name: string(req.body.name, '姓名', 80),
       })
     } catch (error) {
-      if (['SQLITE_CONSTRAINT_UNIQUE', 'ER_DUP_ENTRY'].includes(error.code)) {
+      if (['SQLITE_CONSTRAINT_UNIQUE', 'SQLITE_CONSTRAINT_PRIMARYKEY', 'ER_DUP_ENTRY'].includes(error.code)) {
         return res.status(202).json(response)
       }
       throw error
@@ -120,27 +115,7 @@ auth.post(['/auth/register', '/auth/login', '/user/register', '/user/login', '/a
     await audit(req, 'register', 'users', userId)
     return res.status(202).json(response)
   }
-  const user = await db.get('SELECT * FROM users WHERE username=?', [username])
-  let valid = false
-  if (user?.password_hash.startsWith('legacy-scrypt$')) {
-    const [, salt, oldHash] = user.password_hash.split('$')
-    const actual = await scrypt(password, salt, 64)
-    const expected = Buffer.from(oldHash, 'hex')
-    valid = actual.length === expected.length && timingSafeEqual(actual, expected)
-    if (valid) {
-      const hash = await bcrypt.hash(password, 12)
-      await db.run('UPDATE users SET password_hash=? WHERE id=?', [hash, user.id])
-      if (db.legacyPassword) await db.run('UPDATE users SET password=? WHERE id=?', [hash, user.id])
-    }
-  } else if (user) valid = await bcrypt.compare(password, user.password_hash)
-  if (!valid || !user) fail(401, '账号或密码错误')
-  if (user.status !== 'active') fail(403, user.status === 'pending' ? '教师账号等待管理员审核' : '账号已停用')
-  await promisify(req.session.regenerate).call(req.session)
-  req.session.userId = user.id
-  req.session.createdAt = Date.now()
-  await promisify(req.session.save).call(req.session)
-  req.user = user
-  await audit(req, 'login', 'users', user.id)
+  const user = await login(req, username, password)
   res.json({ success: true, user: publicUser(user) })
 })
 auth.get(['/auth/me', '/user/me'], authenticate, (req, res) => res.json({ user: publicUser(req.user) }))
@@ -152,12 +127,8 @@ auth.post(['/auth/logout', '/user/logout'], async (req, res) => {
   res.json({ success: true })
 })
 auth.post('/auth/refresh', authenticate, async (req, res) => {
-  const createdAt = req.session.createdAt
-  await promisify(req.session.regenerate).call(req.session)
-  req.session.userId = req.user.id
-  req.session.createdAt = createdAt
-  await promisify(req.session.save).call(req.session)
-  res.json({ success: true, user: publicUser(req.user) })
+  const user = await refreshSession(req)
+  res.json({ success: true, user: publicUser(user) })
 })
 auth.patch('/auth/password', authenticate, async (req, res) => {
   validatePassword(req.body.password)
@@ -165,6 +136,9 @@ auth.patch('/auth/password', authenticate, async (req, res) => {
   if (typeof req.body.currentPassword !== 'string' || !await bcrypt.compare(req.body.currentPassword, row.password_hash)) fail(400, '原密码错误')
   const hash = await bcrypt.hash(req.body.password, 12)
   await db.transaction(async () => {
+    const current = await db.get('SELECT password_hash FROM users WHERE id=?' + db.lock, [req.user.id])
+    if (current?.password_hash !== row.password_hash) fail(401, '请重新登录', 'UNAUTHENTICATED')
+    await authenticate(req, null, () => {})
     await db.run('UPDATE users SET password_hash=? WHERE id=?', [hash, req.user.id])
     if (db.legacyPassword) await db.run('UPDATE users SET password=? WHERE id=?', [hash, req.user.id])
     await revokeUserSessions(req.user.id)
@@ -174,16 +148,15 @@ auth.patch('/auth/password', authenticate, async (req, res) => {
   res.clearCookie('connect.sid', cookieOptions).json({ success: true })
 })
 auth.get('/users', authenticate, roles('admin'), async (_req, res) => {
-  res.json({ items: await db.all('SELECT id,username,role,status,created_at FROM users ORDER BY id') })
+  res.json({ items: await db.all("SELECT id,username,role,status,created_at FROM users WHERE status<>'deleted' ORDER BY id") })
 })
 auth.patch('/users/:id', authenticate, roles('admin'), async (req, res) => {
   const userId = id(req.params.id)
   const status = choice(req.body.status, ['active', 'disabled'])
-  const target = await db.get('SELECT id,role FROM users WHERE id=?', [userId])
-  if (!target) fail(404, '账号不存在')
-  if (target.role === 'admin') fail(403, '此接口不能停用管理员')
   await db.transaction(async () => {
-    await db.get('SELECT id FROM users WHERE id=?' + db.lock, [userId])
+    const target = await db.get('SELECT id,role,status FROM users WHERE id=?' + db.lock, [userId])
+    if (!target || target.status === 'deleted') fail(404, '账号不存在')
+    if (target.role === 'admin') fail(403, '此接口不能停用管理员')
     await db.run('UPDATE users SET status=? WHERE id=?', [status, userId])
     if (status === 'disabled') await revokeUserSessions(userId)
     await audit(req, 'user.status', 'users', userId)

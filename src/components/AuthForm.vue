@@ -90,7 +90,7 @@ onMounted(refreshCaptcha)
             <el-input v-model="form.username" :placeholder="isRegister ? '设置用户名' : '输入用户名'" size="large" clearable autocomplete="username" />
           </el-form-item>
           <el-form-item v-if="!resetMode" label="密码">
-            <el-input v-model="form.password" type="password" show-password :placeholder="isRegister ? '至少 8 位，包含数字和非数字字符' : '输入密码'" size="large" clearable :autocomplete="isRegister ? 'new-password' : 'current-password'" />
+            <el-input v-model="form.password" type="password" show-password placeholder="请输入密码" size="large" clearable :autocomplete="isRegister ? 'new-password' : 'current-password'" />
           </el-form-item>
           <el-form-item v-if="isRegister" label="确认密码">
             <el-input v-model="form.confirmPassword" type="password" show-password placeholder="确认密码" size="large" clearable autocomplete="new-password" />
@@ -101,8 +101,8 @@ onMounted(refreshCaptcha)
               <el-radio-button value="student">学生</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <template v-if="isRegister || resetMode"><el-form-item :label="form.role === 'student' ? '学号' : '工号'" required><el-input v-model="form.number" maxlength="64" placeholder="注册后不可修改" /></el-form-item><el-form-item label="姓名" required><el-input v-model="form.name" maxlength="80" placeholder="请输入真实姓名" /></el-form-item></template>
-          <el-alert v-if="resetMode" title="仅学生和教师可申请，每账号 24 小时限一次。提交仅生成待办，账号和现有登录仍可使用；请联系管理员核实身份并重设密码。" type="warning" :closable="false" />
+          <template v-if="isRegister || resetMode"><el-form-item :label="form.role === 'student' ? '学号' : '工号'" required><el-input v-model="form.number" maxlength="64" placeholder="请输入编号" /></el-form-item><el-form-item label="姓名" required><el-input v-model="form.name" maxlength="80" placeholder="请输入真实姓名" /></el-form-item></template>
+          <el-alert v-if="resetMode" title="提交后需等待管理员重置密码" type="warning" :closable="false" />
           <el-form-item label="验证码">
             <div class="captcha-group">
               <el-input v-model="form.code" maxlength="5" placeholder="输入图中字符" aria-label="验证码" size="large" :disabled="busy || refreshing" autocomplete="off" />
@@ -112,7 +112,6 @@ onMounted(refreshCaptcha)
                 <el-button link class="captcha-refresh" :loading="refreshing" :disabled="busy" @click="refreshCaptcha()">刷新验证码</el-button>
               </div>
             </div>
-            <div class="captcha-hint">5 分钟内有效，不区分大小写</div>
           </el-form-item>
         <div class="button-group">
           <el-button class="auth-submit" type="primary" native-type="submit" :loading="busy">{{ isRegister ? '注册' : resetMode ? '提交重置申请' : '登录' }}</el-button>

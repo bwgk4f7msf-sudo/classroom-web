@@ -12,7 +12,16 @@ const local = (iso) => new Date(new Date(iso).getTime() + 8 * 3600000).toISOStri
 watch(() => props.modelValue, (open) => {
   if (!open) return
   const tomorrow = local(Date.now() + 86400000).slice(0, 10)
-  Object.assign(form, { course_name: '', english_name: '', name: '', term: `${new Date().getFullYear()} 学年`, reason: '', schedule: { date: tomorrow, start: '13:30', end: '15:00', repeat: 'once', interval: 1, weekdays: [1], until: tomorrow, location: '' } })
+  Object.assign(form, {
+    course_name: '', english_name: '', name: '',
+    term: `${new Date().getFullYear()} 学年`, reason: '',
+    schedule: {
+      date: tomorrow, start: '13:30', end: '15:00',
+      repeat: 'weekly', interval: 1,
+      weekdays: [new Date(`${tomorrow}T00:00:00Z`).getUTCDay()],
+      until: tomorrow, location: '',
+    },
+  })
   if (props.course) Object.assign(form, { course_name: props.course.course_name, english_name: props.course.english_name || '', name: props.course.name, term: props.course.term, schedule: props.course.schedule ? JSON.parse(JSON.stringify(props.course.schedule)) : form.schedule })
   if (props.session) Object.assign(form.schedule, { date: local(props.session.start_at).slice(0, 10), start: local(props.session.start_at).slice(11, 16), end: local(props.session.end_at).slice(11, 16), repeat: 'once', location: props.session.location })
   formRef.value?.clearValidate()
@@ -46,10 +55,9 @@ async function save() {
         </div>
         <el-divider content-position="left">上课安排</el-divider>
       </template>
-      <el-alert v-if="course && !session" title="将替换全部未开始课次，包括已单独调整的课次；历史课次和考勤记录保留。请选择新的起始日期。" type="warning" :closable="false" show-icon />
-      <p class="muted">所有时间均为北京时间（UTC+8）。{{ session ? '本次调整不会影响其他课次。' : '可以在课程列表中单独调整某一课次。' }}</p>
+      <el-alert v-if="course && !session" title="将替换未开始的课次" type="warning" :closable="false" show-icon />
       <div class="form-grid">
-        <el-form-item label="上课日期" required><el-date-picker v-model="form.schedule.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" /></el-form-item>
+        <el-form-item label="上课日期（北京时间）" required><el-date-picker v-model="form.schedule.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" /></el-form-item>
         <el-form-item label="上课地点" prop="schedule.location" :rules="required('请输入上课地点')"><el-input v-model="form.schedule.location" placeholder="例如：第一教学楼 1001" maxlength="100" /></el-form-item>
         <el-form-item label="开始时间" required><el-time-picker v-model="form.schedule.start" format="HH:mm" value-format="HH:mm" placeholder="开始时间" /></el-form-item>
         <el-form-item label="结束时间" required><el-time-picker v-model="form.schedule.end" format="HH:mm" value-format="HH:mm" placeholder="结束时间" /></el-form-item>

@@ -1,6 +1,12 @@
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+let unauthorizedHandler = () => () => {}
+
+export function setUnauthorizedHandler(factory) {
+  unauthorizedHandler = factory
+}
 
 async function api(path, options = {}) {
+  const handleUnauthorized = unauthorizedHandler()
   const response = await fetch(`${baseURL}${path}`, {
     credentials: 'include',
     ...options,
@@ -14,6 +20,9 @@ async function api(path, options = {}) {
   }
   const result = await response.json()
   if (!response.ok) {
+    if (response.status === 401 && result.code === 'UNAUTHENTICATED') {
+      handleUnauthorized()
+    }
     const error = new Error(result.message || '请求失败')
     error.status = response.status
     throw error

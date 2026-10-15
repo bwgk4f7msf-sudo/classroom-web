@@ -40,7 +40,12 @@ async function saveSessions(classId, sessions, teacherId, excludeId) {
     const conflicts = await db.all(`SELECT s.* FROM course_sessions s JOIN teaching_classes c ON c.id=s.teaching_class_id WHERE c.teacher_id=? AND c.status='active' AND s.start_at<? AND s.end_at>?`, [teacherId, s.end_at, s.start_at])
     if (conflicts.some((c) => c.id !== excludeId)) fail(409, '该教师在所选时间已有课程，请调整上课时间')
     if (excludeId) await db.run('UPDATE course_sessions SET start_at=?,end_at=?,location=?,change_reason=? WHERE id=?', [s.start_at, s.end_at, s.location, s.reason, excludeId])
-    else await db.run('INSERT INTO course_sessions(teaching_class_id,start_at,end_at,location,original_start,change_reason) VALUES (?,?,?,?,?,?)', [classId, s.start_at, s.end_at, s.location, s.start_at, s.reason || null])
+    else await db.run(`INSERT INTO course_sessions(
+      teaching_class_id,start_at,end_at,location,original_start,change_reason
+    ) VALUES (?,?,?,?,?,?)`, [
+      classId, s.start_at, s.end_at, s.location,
+      s.original_start ?? s.start_at, s.reason || null,
+    ])
   }
 }
 scheduling.get('/schedule', async (req, res) => {
@@ -55,12 +60,13 @@ scheduling.post('/scheduled-courses/:id/students', teacher, async (req, res) => 
   const c = await ownedClass(req, req.params.id)
   if (c.status !== 'active') fail(409, '教学班已归档')
   const number = string(req.body.student_no, '学号', 64)
-  const s = await db.get("SELECT s.id FROM students s JOIN users u ON u.id=s.user_id WHERE s.student_no=? AND u.status='active'", [number])
-  if (!s) fail(404, '未找到该学号的有效学生账号')
   await db.transaction(async () => {
+    const s = await db.get(`SELECT s.id FROM students s JOIN users u ON u.id=s.user_id
+      WHERE s.student_no=? AND u.status='active'` + db.lock, [number])
+    if (!s) fail(404, '未找到该学号的有效学生账号')
     const enrollment = await db.get('SELECT * FROM enrollments WHERE teaching_class_id=? AND student_id=?', [c.id, s.id])
     if (enrollment?.status === 'active') fail(409, '该学生已在教学班中')
-    if (enrollment) await db.run("UPDATE enrollments SET status='active' WHERE id=?", [enrollment.id])
+    if (enrollment) await db.run("UPDATE enrollments SET status='active',revision=revision+1 WHERE id=?", [enrollment.id])
     else await db.run('INSERT INTO enrollments(teaching_class_id,student_id) VALUES (?,?)', [c.id, s.id])
     await audit(req, 'enroll', 'teaching_classes', c.id)
   })
@@ -89,8 +95,18 @@ scheduling.put('/scheduled-courses/:id', teacher, action('course_update', async 
     if (c.status !== 'active') fail(409, '教学班已归档')
     if (req.user.role === 'teacher' && !req.approved) return submitRequest(req, 'course_update', c.id, req.body)
     await db.get('SELECT id FROM teachers WHERE id=?' + db.lock, [c.teacher_id])
-    await db.run('DELETE FROM course_sessions WHERE teaching_class_id=? AND start_at>?', [c.id, now()])
-    await saveSessions(c.id, data.sessions.map((s) => ({ ...s, reason })), c.teacher_id)
+    const cutoff = now()
+    const previous = await db.all(`SELECT original_start FROM course_sessions
+      WHERE teaching_class_id=? AND start_at>?
+      ORDER BY original_start,id` + db.lock, [c.id, cutoff])
+    await db.run('DELETE FROM course_sessions WHERE teaching_class_id=? AND start_at>?', [c.id, cutoff])
+    // Match lessons in their original order, even if a single lesson was moved later.
+    const replacement = data.sessions.map((session, index) => ({
+      ...session,
+      original_start: previous[index]?.original_start ?? session.start_at,
+      reason: previous[index] ? reason : null,
+    }))
+    await saveSessions(c.id, replacement, c.teacher_id)
     const shared = await db.get('SELECT COUNT(*) AS total FROM teaching_classes WHERE course_id=?', [c.course_id])
     if (shared.total > 1) {
       // A teacher editing their class must not rename another teacher's course.

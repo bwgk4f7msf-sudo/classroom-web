@@ -5,6 +5,7 @@ import { authenticate, roles, id, string, choice, fail, audit, now } from './htt
 import { validatePassword, revokeUserSessions } from './auth.js'
 import { submitRequest } from './requests.js'
 import { scheduleActions } from './scheduling.js'
+import { removeEnrollment } from './enrollments.js'
 
 export const workflows = Router()
 workflows.use(authenticate)
@@ -38,7 +39,7 @@ workflows.patch('/requests/:id', roles('admin'), async (req, res) => {
         const table = applicant.role === 'student' ? 'students' : 'teachers'
         await db.run(`UPDATE ${table} SET name=? WHERE user_id=?`, [string(body.name, '姓名', 80), applicant.id])
       } else {
-        const handler = scheduleActions[row.kind]
+        const handler = row.kind === 'enrollment_remove' ? removeEnrollment : scheduleActions[row.kind]
         if (!handler) fail(400, '不支持的申请类型')
         // Run the same validated mutation within this transaction; approval is never an HTTP replay.
         const response = { headersSent: false, status() { return this }, json(value) { applied = value; this.headersSent = true; return this } }
@@ -56,8 +57,11 @@ workflows.post('/users/:id/reset-password', roles('admin'), async (req, res) => 
   const hash = await bcrypt.hash(req.body.password, 12)
   await db.transaction(async () => {
     const target = await db.get('SELECT * FROM users WHERE id=?' + db.lock, [id(req.params.id)])
-    if (!target) fail(404, '账号不存在')
+    if (!target || target.status === 'deleted') fail(404, '账号不存在')
     if (!['teacher', 'student'].includes(target.role)) fail(403, '此接口仅适用于教师和学生')
+    const request = await db.get(`SELECT id FROM change_requests
+      WHERE user_id=? AND kind='password_reset' AND status='pending'` + db.lock, [target.id])
+    if (!request) fail(409, '该用户没有待处理的密码重置申请')
     await db.run("UPDATE users SET password_hash=?,status='active' WHERE id=?", [hash, target.id])
     if (db.legacyPassword) await db.run('UPDATE users SET password=? WHERE id=?', [hash, target.id])
     await revokeUserSessions(target.id)
@@ -69,13 +73,14 @@ workflows.post('/users/:id/reset-password', roles('admin'), async (req, res) => 
 workflows.get('/student-candidates', roles('admin', 'teacher'), async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 64) : ''
   if (!q) return res.json({ items: [] })
-  if (req.user.role === 'teacher') {
-    const items = await db.all(`SELECT s.id,s.student_no,s.name
-      FROM students s JOIN users u ON u.id=s.user_id
-      WHERE u.status='active' AND s.student_no=? LIMIT 1`, [q])
-    return res.json({ items })
-  }
-  res.json({ items: await db.all("SELECT s.id,s.student_no,s.name FROM students s JOIN users u ON u.id=s.user_id WHERE u.status='active' AND (s.student_no LIKE ? OR s.name LIKE ?) ORDER BY s.student_no LIMIT 20", [`%${q}%`, `%${q}%`]) })
+  // Treat wildcard characters as literal input while supporting partial names/numbers.
+  const pattern = `%${q.replace(/[!%_]/g, '!$&')}%`
+  const items = await db.all(`SELECT s.id,s.student_no,s.name
+    FROM students s JOIN users u ON u.id=s.user_id
+    WHERE u.status='active'
+      AND (s.student_no LIKE ? ESCAPE '!' OR s.name LIKE ? ESCAPE '!')
+    ORDER BY s.student_no LIMIT 20`, [pattern, pattern])
+  res.json({ items })
 })
 workflows.get('/notifications', roles('student'), async (req, res) => {
   res.json({ items: await db.all('SELECT * FROM notifications WHERE user_id=? AND closed_at IS NULL ORDER BY id', [req.user.id]) })
