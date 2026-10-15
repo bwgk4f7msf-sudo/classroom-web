@@ -4,6 +4,7 @@ import { hasNumberConflict, reservePersonnelNumber } from './db/personnel-number
 import { revokeUserSessions } from './auth.js'
 import { authenticate, roles, id, string, fail, audit, now } from './http.js'
 import { notifyClass } from './requests.js'
+import { archiveTeachingClass } from './classroom-lifecycle.js'
 
 export const users = Router()
 users.use(['/students', '/teachers', '/users'], authenticate, roles('admin'))
@@ -67,8 +68,7 @@ users.delete('/users/:id', async (req, res) => {
       const classes = await db.all(`SELECT c.id FROM teaching_classes c
         JOIN teachers t ON t.id=c.teacher_id WHERE t.user_id=? AND c.status='active'`, [target.id])
       for (const classroom of classes) {
-        await db.run("UPDATE teaching_classes SET status='archived' WHERE id=?", [classroom.id])
-        await db.run("UPDATE attendance_tasks SET status='ended' WHERE teaching_class_id=?", [classroom.id])
+        await archiveTeachingClass(classroom.id)
         await notifyClass(classroom.id, '任课教师已移除，教学班已归档，请联系管理员')
       }
     }

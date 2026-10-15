@@ -63,13 +63,15 @@ schedule 字段为 `{date,start,end,location,repeat,interval?,weekdays?,until?}`
 | GET | `/teaching-classes` | 管理员全部、教师本人、学生有效选课 |
 | POST | `/teaching-classes` | 管理员：`{course_id,teacher_id,term,name}` |
 | PATCH | `/teaching-classes/{id}` | 管理员：`{name?,term?,status?}` |
-| DELETE | `/teaching-classes/{id}` | 管理员：归档，停止该班签到 |
+| DELETE | `/teaching-classes/{id}` | 管理员：归档，停止该班签到，同步结束开放或暂停中的考勤 |
 | GET | `/teaching-classes/{id}/enrollments` | 管理员或对应教师查看当前学生；含 student_no、name、class_name、removal_pending |
 | POST | `/teaching-classes/{id}/enrollments` | 管理员或对应教师：`{student_id}`；重复选课返回 409 |
 | DELETE | `/enrollments/{id}` | `{reason}`；教师申请返回 202，管理员直接移除返回 200；在 `/requests` 审批 enrollment_remove，保留历史考勤 |
 | PATCH | `/enrollments/{id}` | 管理员或对应教师：`{status:"active"或"withdrawn",reason?}`；withdrawn 同样须原因，教师须审批，不能绕过；active 校验有效学生 |
 
 不物理删除用户、课程、教学班和历史考勤，避免级联删除审计数据。停用使用 `PATCH /users/{id}`，移除使用 DELETE 并置为 deleted，不可恢复；历史资料、账号和编号保留。恢复普通退课关系使用 PATCH，不重新插入；已移除学生不能重新加入。
+
+教学班归档（包括 PATCH 设置 archived、课程取消获批和移除教师）会在同一事务中结束未结束的考勤任务，保留已有记录，不自动补记缺勤。重新启用教学班不会重新开启已结束的考勤。
 
 ## 考勤与统计
 

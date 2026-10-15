@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import db from './db/db.js'
 import { notifyClass } from './requests.js'
+import { archiveTeachingClass } from './classroom-lifecycle.js'
 import { listEnrollments, removeEnrollment } from './enrollments.js'
 import { authenticate, roles, student, ownedClass, id, string, choice, fail, audit, now } from './http.js'
 
@@ -62,13 +63,19 @@ business.post('/teaching-classes', admin, async (req, res) => {
 business.patch('/teaching-classes/:id', admin, async (req, res) => {
   const row = await db.get('SELECT * FROM teaching_classes WHERE id=?', [id(req.params.id)])
   if (!row) fail(404, '教学班不存在')
-  await mutation(req, 'update', 'teaching_classes', () => db.run('UPDATE teaching_classes SET name=?,term=?,status=? WHERE id=?',
-    [string(req.body.name ?? row.name, '教学班名称'), string(req.body.term ?? row.term, '学期', 64), choice(req.body.status ?? row.status, ['active', 'archived']), row.id]))
+  await mutation(req, 'update', 'teaching_classes', async () => {
+    const status = choice(req.body.status ?? row.status, ['active', 'archived'])
+    await db.run('UPDATE teaching_classes SET name=?,term=?,status=? WHERE id=?', [
+      string(req.body.name ?? row.name, '教学班名称'),
+      string(req.body.term ?? row.term, '学期', 64), status, row.id,
+    ])
+    if (status === 'archived') await archiveTeachingClass(row.id)
+  })
   res.json({ success: true })
 })
 business.delete('/teaching-classes/:id', admin, async (req, res) => {
   if (!await db.get('SELECT id FROM teaching_classes WHERE id=?', [id(req.params.id)])) fail(404, '教学班不存在')
-  await mutation(req, 'archive', 'teaching_classes', () => db.run("UPDATE teaching_classes SET status='archived' WHERE id=?", [id(req.params.id)]))
+  await mutation(req, 'archive', 'teaching_classes', () => archiveTeachingClass(id(req.params.id)))
   res.json({ success: true })
 })
 business.get('/teaching-classes/:id/enrollments', roles('admin', 'teacher'), listEnrollments)

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import db from './db/db.js'
 import { authenticate, roles, ownedClass, id, string, fail, audit, now } from './http.js'
 import { submitRequest, notifyClass } from './requests.js'
+import { archiveTeachingClass } from './classroom-lifecycle.js'
 import { generateSessions } from '../shared/schedule.js'
 
 export const scheduling = Router()
@@ -17,8 +18,7 @@ scheduling.post('/scheduled-courses/:id/cancel', teacher, action('course_cancel'
     await db.get('SELECT id FROM teachers WHERE id=?' + db.lock, [c.teacher_id])
     if (c.status !== 'active') fail(409, '课程已经取消 / 归档')
     if (req.user.role === 'teacher' && !req.approved) return submitRequest(req, 'course_cancel', c.id, { reason })
-    await db.run("UPDATE teaching_classes SET status='archived' WHERE id=?", [c.id])
-    await db.run("UPDATE attendance_tasks SET status='ended' WHERE teaching_class_id=? AND status<>'ended'", [c.id])
+    await archiveTeachingClass(c.id)
     await notifyClass(c.id, `课程已取消。原因：${reason}`)
     await audit(req, 'schedule.cancel', 'teaching_classes', c.id)
     return { success: true }

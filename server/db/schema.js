@@ -1,9 +1,9 @@
 export function schema(mysql) {
   const id = mysql ? 'INTEGER PRIMARY KEY AUTO_INCREMENT' : 'INTEGER PRIMARY KEY AUTOINCREMENT'
   const statements = [
+    `CREATE TABLE IF NOT EXISTS users (id ${id}, username VARCHAR(24) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL, role VARCHAR(16) NOT NULL DEFAULT 'student', status VARCHAR(16) NOT NULL DEFAULT 'active', avatar TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS change_requests (id ${id}, user_id INTEGER NOT NULL, kind VARCHAR(32) NOT NULL, target_id INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'pending', review_note VARCHAR(500), reviewer_id INTEGER, created_at VARCHAR(30) NOT NULL, reviewed_at VARCHAR(30), FOREIGN KEY(user_id) REFERENCES users(id))`,
     `CREATE TABLE IF NOT EXISTS notifications (id ${id}, user_id INTEGER NOT NULL, message TEXT NOT NULL, created_at VARCHAR(30) NOT NULL, closed_at VARCHAR(30), FOREIGN KEY(user_id) REFERENCES users(id))`,
-    `CREATE TABLE IF NOT EXISTS users (id ${id}, username VARCHAR(24) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL, role VARCHAR(16) NOT NULL DEFAULT 'student', status VARCHAR(16) NOT NULL DEFAULT 'active', avatar TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS students (id ${id}, user_id INTEGER NOT NULL UNIQUE, student_no VARCHAR(64) NOT NULL UNIQUE, name VARCHAR(80) NOT NULL, class_name VARCHAR(100) NOT NULL DEFAULT '', FOREIGN KEY(user_id) REFERENCES users(id))`,
     `CREATE TABLE IF NOT EXISTS teachers (id ${id}, user_id INTEGER NOT NULL UNIQUE, teacher_no VARCHAR(64) NOT NULL UNIQUE, name VARCHAR(80) NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))`,
     `CREATE TABLE IF NOT EXISTS courses (id ${id}, course_code VARCHAR(64) NOT NULL UNIQUE, course_name VARCHAR(100) NOT NULL, credit REAL NOT NULL DEFAULT 0 CHECK(credit >= 0), status VARCHAR(16) NOT NULL DEFAULT 'active')`,
