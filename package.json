@@ -8,6 +8,7 @@
     "dev:web": "vite",
     "api": "node --env-file-if-exists=.env server/app.js",
     "dev:full": "npm run dev",
+    "demo:full": "node --env-file-if-exists=.env scripts/demo.js",
     "start": "node --env-file-if-exists=.env server/app.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js",
     "build": "vite build",

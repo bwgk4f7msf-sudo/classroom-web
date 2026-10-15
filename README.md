@@ -14,6 +14,18 @@ npm run dev
 
 `npm run dev` / `npm run dev:full` 同时启动 Vite（默认 5173）和 API（默认 3001），避免只启动前端导致验证码/API 不可用。单独启动前端用 `npm run dev:web`，单独 API 用 `npm run api`。默认地址：[首页](http://localhost:5173/)、[登录](http://localhost:5173/#/login)、[注册](http://localhost:5173/#/register)。
 
+### 局域网演示
+
+完成上述安装和 `.env` 配置后运行：
+
+```sh
+npm run demo:full
+```
+
+此命令同时启动前端和 API，前端监听 `0.0.0.0:5173`，并自动将本机 IPv4 地址对应的前端来源加入本次运行的 `APP_ORIGINS`，保留已有白名单。其他设备连接同一局域网后，访问终端输出的 `http://本机局域网IP:5173`。API 继续通过前端的 `/api` 代理访问，无须开放 API 端口。
+
+演示使用固定端口 5173，端口被占用时会报错；请先停止占用端口的开发服务。若其他设备无法连接，请在系统防火墙中允许局域网访问 TCP 5173，并检查路由器是否启用了设备隔离。使用自定义域名时，仍需将完整来源加入 `.env` 的 `APP_ORIGINS`。IP 变化后重新启动命令。不支持 `NODE_ENV=production`。
+
 ## 项目文件架构
 
 ```text
