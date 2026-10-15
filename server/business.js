@@ -3,6 +3,7 @@ import db from './db/db.js'
 import { notifyClass } from './requests.js'
 import { archiveTeachingClass } from './classroom-lifecycle.js'
 import { listEnrollments, removeEnrollment } from './enrollments.js'
+import { listStudentCandidates, addStudents } from './student-enrollment.js'
 import { authenticate, roles, student, ownedClass, id, string, choice, fail, audit, now } from './http.js'
 
 export const business = Router()
@@ -78,6 +79,8 @@ business.delete('/teaching-classes/:id', admin, async (req, res) => {
   await mutation(req, 'archive', 'teaching_classes', () => archiveTeachingClass(id(req.params.id)))
   res.json({ success: true })
 })
+business.get('/teaching-classes/:id/student-candidates', roles('admin', 'teacher'), listStudentCandidates)
+business.post('/teaching-classes/:id/enrollments/batch', roles('admin', 'teacher'), addStudents)
 business.get('/teaching-classes/:id/enrollments', roles('admin', 'teacher'), listEnrollments)
 business.delete('/enrollments/:id', roles('admin', 'teacher'), removeEnrollment)
 business.post('/teaching-classes/:id/enrollments', roles('admin', 'teacher'), async (req, res) => {

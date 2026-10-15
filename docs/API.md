@@ -64,6 +64,8 @@ schedule 字段为 `{date,start,end,location,repeat,interval?,weekdays?,until?}`
 | POST | `/teaching-classes` | 管理员：`{course_id,teacher_id,term,name}` |
 | PATCH | `/teaching-classes/{id}` | 管理员：`{name?,term?,status?}` |
 | DELETE | `/teaching-classes/{id}` | 管理员：归档，停止该班签到，同步结束开放或暂停中的考勤 |
+| GET | `/teaching-classes/{id}/student-candidates` | 管理员或对应教师：完整有效学生列表；`q` 按学号 / 姓名模糊搜索，空查询列出全部；`page` 默认 1，`page_size` 默认 20、最大 100；返回 items、total、page、page_size，学生字段为 id、student_no、name、class_name、enrolled（是否已加入本班） |
+| POST | `/teaching-classes/{id}/enrollments/batch` | 管理员或对应教师：`{student_ids:[学生ID,...]}`，1–500 项；去重后批量加入，已在班中跳过、已退课恢复，返回 `{success:true,added,skipped}`；包含无效学生返回 409 并整批回滚 |
 | GET | `/teaching-classes/{id}/enrollments` | 管理员或对应教师查看当前学生；含 student_no、name、class_name、removal_pending |
 | POST | `/teaching-classes/{id}/enrollments` | 管理员或对应教师：`{student_id}`；重复选课返回 409 |
 | DELETE | `/enrollments/{id}` | `{reason}`；教师申请返回 202，管理员直接移除返回 200；在 `/requests` 审批 enrollment_remove，保留历史考勤 |

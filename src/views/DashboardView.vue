@@ -11,6 +11,7 @@ import CourseCard from '@/components/CourseCard.vue'
 import CourseDetails from '@/components/CourseDetails.vue'
 import AttendancePanel from '@/components/AttendancePanel.vue'
 import AccountSettings from '@/components/AccountSettings.vue'
+import StudentEnrollmentDialog from '@/components/StudentEnrollmentDialog.vue'
 import { user } from '@/auth.js'
 import api from '@/api.js'
 import { dateKey, formatDate, formatTime, roleNames, statusNames } from '@/dashboard.js'
@@ -19,7 +20,7 @@ const route = useRoute(), router = useRouter()
 const loading = ref(false), error = ref(''), saving = ref(false), search = ref('')
 const classes = ref([]), sessions = ref([]), users = ref([]), logs = ref([]), records = ref([]), tasks = ref([])
 const editor = ref(false), selectedCourse = ref(null), selectedSession = ref(null), details = ref(null)
-const enrollment = ref(false), targetClass = ref(null), studentNo = ref('')
+const enrollment = ref(false), targetClass = ref(null)
 const launch = ref(false), launchClass = ref(null), duration = ref(15), lateMinutes = ref(5)
 const clock = ref(Date.now()), timer = setInterval(() => { clock.value = Date.now() }, 30000)
 onUnmounted(() => { clearInterval(timer); version++ })
@@ -72,9 +73,6 @@ async function approve(u, status) {
   try { await ElMessageBox.confirm(`${status === 'active' ? '批准 / 启用' : '拒绝 / 停用'}账号「${u.username}」？`, '确认账户操作', { type: 'warning' }) } catch { return }
   await execute(() => api(`/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ status }) }), '账户状态已更新')
 }
-async function candidates(query, callback) {
-  try { callback((await api('/student-candidates?q=' + encodeURIComponent(query))).items.map(s => ({ value: s.student_no, label: s.student_no + ' · ' + s.name }))) } catch (e) { callback([]); ElMessage.error(e.message) }
-}
 async function cancelCourse(c) {
   let reason
   try { reason = (await ElMessageBox.prompt('请输入取消原因', '申请取消课程', { inputValidator: v => !!v?.trim() || '请填写原因' })).value } catch { return }
@@ -85,10 +83,9 @@ async function archive(c) {
   try { await ElMessageBox.confirm('确认归档该教学班？', '归档教学班', { type: 'warning' }) } catch { return }
   if (await execute(() => api(`/teaching-classes/${c.id}`, { method: 'DELETE' }), '已归档')) details.value = null
 }
-function addStudent(c = null) { targetClass.value = c?.id || activeClasses.value[0]?.id || null; studentNo.value = ''; enrollment.value = true }
-async function enroll() {
-  if (!targetClass.value || !studentNo.value.trim()) return ElMessage.warning('请选择课程并选择学生学号')
-  if (await execute(() => api(`/scheduled-courses/${targetClass.value}/students`, { method: 'POST', body: JSON.stringify({ student_no: studentNo.value }) }), '学生已加入教学班')) enrollment.value = false
+function addStudent(c = null) {
+  targetClass.value = c?.id || activeClasses.value[0]?.id || null
+  enrollment.value = true
 }
 function launchTask() { launchClass.value = activeClasses.value[0]?.id || null; launch.value = true }
 async function createTask() {
@@ -145,24 +142,9 @@ async function createTask() {
       @close="details = null" @edit="edit(details, $event)" @add-student="addStudent(details)"
       @cancel="cancelCourse(details)" @archive="archive(details)" @changed="refresh"
     />
-    <el-dialog v-model="enrollment" title="添加学生" width="min(480px, 94vw)" :close-on-click-modal="false">
-      <el-form label-position="top">
-      <el-form-item label="课程 / 教学班">
-      <el-select v-model="targetClass" placeholder="请选择课程">
-      <el-option v-for="c in activeClasses" :key="c.id" :value="c.id" :label="`${c.course_name} · ${c.name}`" />
-      </el-select>
-      </el-form-item>
-      <el-form-item label="学生学号">
-      <el-autocomplete v-model="studentNo" :fetch-suggestions="candidates" :trigger-on-focus="false" placeholder="输入部分学号或姓名，选择候选学生" maxlength="64">
-      <template #default="{ item }">{{ item.label }}</template>
-      </el-autocomplete>
-      </el-form-item>
-      </el-form>
-      <template #footer>
-      <el-button :disabled="saving" @click="enrollment = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="enroll">加入教学班</el-button>
-      </template>
-      </el-dialog>
+    <StudentEnrollmentDialog
+      v-model="enrollment" :classes="classes" :initial-class-id="targetClass" @saved="refresh"
+    />
     <el-dialog v-model="launch" title="发起考勤" width="min(480px, 94vw)" :close-on-click-modal="false"><el-form label-position="top"><el-form-item label="课程 / 教学班"><el-select v-model="launchClass" placeholder="请选择课程"><el-option v-for="c in activeClasses" :key="c.id" :value="c.id" :label="`${c.course_name} · ${c.name}`" /></el-select></el-form-item><el-form-item label="签到时长（分钟）"><el-input-number v-model="duration" :min="1" :max="180" :precision="0" /></el-form-item><el-form-item label="开始后多少分钟记为迟到"><el-input-number v-model="lateMinutes" :min="0" :max="duration || 180" :precision="0" /></el-form-item><el-alert title="确认后立即开始考勤" type="info" :closable="false" /></el-form><template #footer><el-button :disabled="saving" @click="launch = false">取消</el-button><el-button type="primary" :loading="saving" @click="createTask">开始考勤</el-button></template></el-dialog>
   </el-container>
 </template>
