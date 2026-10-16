@@ -12,7 +12,11 @@ const emit = defineEmits(['edit'])
     <el-table-column label="时间" width="125">
       <template #default="{ row }">{{ formatTime(row.start_at) }}–{{ formatTime(row.end_at) }}</template>
     </el-table-column>
-    <el-table-column prop="location" label="地点" min-width="100" />
+    <el-table-column label="地点" min-width="100">
+      <template #default="{ row }">
+        {{ row.location || '未设置' }}
+      </template>
+    </el-table-column>
     <el-table-column label="调课说明" min-width="170">
       <template #default="{ row }">
         <template v-if="row.change_reason">
